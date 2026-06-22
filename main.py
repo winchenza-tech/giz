@@ -10,7 +10,7 @@ from telegram.ext import (
 from google import genai
 from google.genai import types
 
-# Çevresel Değişkenler (Railway'den çekilecek)
+# Çevresel Değişkenler
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ALLOWED_GROUP_ID = os.getenv("ALLOWED_GROUP_ID")
@@ -22,21 +22,18 @@ if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
 IMAGE_URL_1 = "https://example.com/adim1_bildirimler.jpg"
 IMAGE_URL_2 = "https://example.com/adim2_ses_degisimi.jpg"
 
-# Gemini Ayarları (Yeni SDK)
+# Gemini Ayarları
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-
 system_instruction_text = (
     "Kullanıcının sorusunu maksimum 100 kelime olacak şekilde yanıtla. 100 kelimeden kısa olabilirse daha da kısa yanıtla. "
     "Her paragrafın en başına mutlaka uygun bir emoji koy. "
     "KESİNLİKLE hiçbir metinde '*' (yıldız) simgesini kullanma, metinleri kalın veya italik yapmaya çalışma."
 )
 
-# Konuşma Durumları (State)
 WAITING_FOR_TIME = 1
 WAITING_FOR_IMPORTANCE = 2
 
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sadece özel mesajda çalışan kullanım kılavuzu ve görsel gönderimi (/start ve /yardim için)."""
     if update.message.chat.type != "private":
         return
 
@@ -77,7 +74,6 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Kılavuz görselleri yüklenirken bir hata oluştu, lütfen bot sahibinin linkleri güncellemesini bekleyin.")
 
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sadece belirli grupta çalışan yapay zeka cevaplayıcısı."""
     if update.message.chat.type == "private" or str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
 
@@ -103,7 +99,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Özel mesajda hatırlatıcı başlatır ve formatı analiz eder."""
     if update.message.chat.type != "private":
         return ConversationHandler.END
 
@@ -140,7 +135,6 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_FOR_TIME
 
 async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Kullanıcıdan adım adım kurulumda saati alır."""
     time_text = update.message.text.strip()
     
     if not re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", time_text):
@@ -158,7 +152,6 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_IMPORTANCE
 
 async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Anket cevabını alır ve zamanlayıcıyı kurar."""
     query = update.callback_query
     await query.answer()
     
@@ -177,47 +170,37 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if target_time < now:
         target_time += datetime.timedelta(days=1)
         
+    # Kalan saniye hesaplaması (İlk mesajın tetikleneceği süre)
     delay_seconds = (target_time - now).total_seconds()
 
     job_data = {
         "chat_id": chat_id,
         "text": final_reminder_text, 
-        "importance": importance,
         "count": 0
     }
     
-    context.job_queue.run_once(
-        trigger_reminder, 
-        delay_seconds, 
-        data=job_data, 
-        name=f"rem_{chat_id}_{target_time.timestamp()}"
-    )
+    job_id = f"rem_{chat_id}_{target_time.timestamp()}"
 
-    await query.edit_message_text(f"Hatırlatıcı başarıyla kuruldu! Saat {time_text} geldiğinde bildirim alacaksınız.")
-    return ConversationHandler.END
-
-async def trigger_reminder(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    data = job.data
-    chat_id = data["chat_id"]
-    importance = data["importance"]
-    
+    # Doğrudan asıl döngüyü kuruyoruz (Gecikmeli başlatarak)
     if importance == "high":
         context.job_queue.run_repeating(
             send_high_importance_alert, 
-            interval=180, 
-            first=0, 
-            data=data,
-            name=f"high_loop_{chat_id}_{job.name}"
+            interval=180,  # 3 dakikada bir
+            first=delay_seconds, # Alarm saati gelene kadar bekle, sonra başla
+            data=job_data,
+            name=f"high_loop_{job_id}"
         )
     else:
         context.job_queue.run_repeating(
             send_normal_importance_alert, 
-            interval=300, 
-            first=0, 
-            data=data,
-            name=f"normal_loop_{chat_id}_{job.name}"
+            interval=300,  # 5 dakikada bir
+            first=delay_seconds, 
+            data=job_data,
+            name=f"normal_loop_{job_id}"
         )
+
+    await query.edit_message_text(f"Hatırlatıcı başarıyla kuruldu! Saat {time_text} geldiğinde bildirim alacaksınız.")
+    return ConversationHandler.END
 
 async def send_high_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
