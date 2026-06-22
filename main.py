@@ -7,7 +7,8 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, 
     ContextTypes, ConversationHandler, MessageHandler, filters
 )
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # Çevresel Değişkenler (Railway'den çekilecek)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -21,21 +22,13 @@ if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
 IMAGE_URL_1 = "https://example.com/adim1_bildirimler.jpg"
 IMAGE_URL_2 = "https://example.com/adim2_ses_degisimi.jpg"
 
-# Gemini Ayarları
-genai.configure(api_key=GEMINI_API_KEY)
-generation_config = {
-    "temperature": 0.7,
-    "max_output_tokens": 150, 
-}
+# Gemini Ayarları (Yeni SDK)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    generation_config=generation_config,
-    system_instruction=(
-        "Kullanıcının sorusunu maksimum 100 kelime olacak şekilde yanıtla. 100 kelimeden kısa olabilirse daha da kısa yanıtla. "
-        "Her paragrafın en başına mutlaka uygun bir emoji koy. "
-        "KESİNLİKLE hiçbir metinde '*' (yıldız) simgesini kullanma, metinleri kalın veya italik yapmaya çalışma."
-    )
+system_instruction_text = (
+    "Kullanıcının sorusunu maksimum 100 kelime olacak şekilde yanıtla. 100 kelimeden kısa olabilirse daha da kısa yanıtla. "
+    "Her paragrafın en başına mutlaka uygun bir emoji koy. "
+    "KESİNLİKLE hiçbir metinde '*' (yıldız) simgesini kullanma, metinleri kalın veya italik yapmaya çalışma."
 )
 
 # Konuşma Durumları (State)
@@ -94,10 +87,19 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        response = model.generate_content(question_text)
+        response = gemini_client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=question_text,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction_text,
+                temperature=0.7,
+                max_output_tokens=150,
+            )
+        )
         clean_response = response.text.replace("*", "")
         await update.message.reply_text(clean_response)
     except Exception as e:
+        print(f"Gemini Hatası: {e}")
         await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -110,11 +112,9 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Lütfen hatırlatılacak metni yazın. Örnek: /hatirlat toplantıya katıl 15:40")
         return ConversationHandler.END
 
-    # Kullanıcı saati metnin sonuna yazmış mı diye kontrol ediyoruz (Örn: 15:40)
     possible_time = args[-1]
     
     if re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", possible_time):
-        # Saat formatı doğru, tek seferde kurulum yapılıyor
         time_text = possible_time
         reminder_text = " ".join(args[:-1])
         
@@ -134,7 +134,6 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         return WAITING_FOR_IMPORTANCE
     else:
-        # Saat metnin sonunda yok, demek ki adım adım kurulum yapılacak
         reminder_text = " ".join(args)
         context.user_data["reminder_text"] = reminder_text
         await update.message.reply_text("Lütfen hatırlatma saatini HH:MM formatında girin (Örneğin 15:40):")
@@ -170,7 +169,6 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     final_reminder_text = f"{reminder_text} ({time_text})"
 
-    # Saat dilimini Türkiye yapıyoruz
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.datetime.now(tz)
     hour, minute = map(int, time_text.split(":"))
@@ -260,4 +258,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith("read_"):
         job_name = query.data.split("read_", 1)[1]
         
-        current
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in current_jobs:
+            job.schedule_removal()
+            
+        await query.edit_message_text(f"Hatırlatıcı tamamlandı.")
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("İşlem iptal edildi.")
+    return ConversationHandler.END
+
+def main():
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("hatirlat", hatirlat_start)],
+        states={
+            WAITING_FOR_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_time)],
+            WAITING_FOR_IMPORTANCE: [CallbackQueryHandler(receive_importance, pattern="^imp_")],
+        },
+        fallbacks=[CommandHandler("iptal", cancel)]
+    )
+
+    app.add_handler(CommandHandler("start", send_guide))
+    app.add_handler(CommandHandler("yardim", send_guide))
+    
+    app.add_handler(CommandHandler("soru", soru))
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
+
+    print("Bot başlatılıyor...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
