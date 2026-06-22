@@ -17,6 +17,10 @@ ALLOWED_GROUP_ID = os.getenv("ALLOWED_GROUP_ID")
 if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
     raise ValueError("Lütfen Railway Variables kısmına TELEGRAM_TOKEN, GEMINI_API_KEY ve ALLOWED_GROUP_ID ekleyin.")
 
+# Kılavuz Görsel Linkleri (Buraları kendi yüklediğin resim linkleriyle değiştir)
+IMAGE_URL_1 = "https://example.com/adim1_bildirimler.jpg"
+IMAGE_URL_2 = "https://example.com/adim2_ses_degisimi.jpg"
+
 # Gemini Ayarları
 genai.configure(api_key=GEMINI_API_KEY)
 generation_config = {
@@ -38,30 +42,38 @@ model = genai.GenerativeModel(
 WAITING_FOR_TIME = 1
 WAITING_FOR_IMPORTANCE = 2
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sadece özel mesajda çalışan kullanım kılavuzu."""
+async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sadece özel mesajda çalışan kullanım kılavuzu ve görsel gönderimi (/start ve /yardim için)."""
     if update.message.chat.type != "private":
         return
 
     guide = (
-        "Merhaba! Bu bot size gruplarda sorularınızı yanıtlamak ve "
-        "özel mesajlarda görevlerinizi hatırlatmak için tasarlandı.\n\n"
-        "KULLANIM KILAVUZU\n"
-        "Grup İçinde:\n"
+        "📌 KULLANIM KILAVUZU\n\n"
+        "Es Justo Grup İçinde:\n"
         "/soru [metin] - Yapay zekaya kısa bir soru sorar.\n\n"
         "Özel Mesajda:\n"
-        "/hatirlat [metin] - Yeni bir hatırlatıcı oluşturma sürecini başlatır.\n\n"
-        "BİLDİRİM SESLERİNİ DEĞİŞTİRME\n"
-        "Uygulama içi bildirim seslerini aşağıdaki görselleri takip ederek değiştirebilirsiniz:\n\n"
-        "Adım 1: Bildirim Menüsü\n"
-        "https://example.com/adim1_bildirimler.jpg\n\n"
-        "Adım 2: Özel Ses Seçimi\n"
-        "https://example.com/adim2_ses_degisimi.jpg"
+        "/hatirlat [metin] - Yeni bir hatırlatıcı oluşturma sürecini başlatır.\n"
+        "/yardim kullanım kılavuzunu ve ayar görsellerini gösterir."
     )
-    await update.message.reply_text(guide, disable_web_page_preview=True)
+    # Önce kılavuz metnini gönderiyoruz
+    await update.message.reply_text(guide)
+
+    # Ardından 2 ayrı mesaj olarak görselleri direkt fotoğraf olarak yolluyoruz
+    try:
+        await context.bot.send_photo(
+            chat_id=update.message.chat_id, 
+            photo=IMAGE_URL_1, 
+            caption="BİLDİRİM SESLERİNİ DEĞİŞTİRME\nAdım 1: Bildirim Menüsü"
+        )
+        await context.bot.send_photo(
+            chat_id=update.message.chat_id, 
+            photo=IMAGE_URL_2, 
+            caption="Adım 2: Özel Ses Seçimi"
+        )
+    except Exception as e:
+        await update.message.reply_text("Kılavuz görselleri yüklenemedi tühh.")
 
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sadece belirli grupta çalışan yapay zeka cevaplayıcısı."""
     if update.message.chat.type == "private" or str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
 
@@ -72,7 +84,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         response = model.generate_content(question_text)
-        # Güvenlik: Gemini yıldız kullanırsa temizle
         clean_response = response.text.replace("*", "")
         await update.message.reply_text(clean_response)
     except Exception as e:
@@ -89,14 +100,14 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     context.user_data["reminder_text"] = reminder_text
-    await update.message.reply_text("Lütfen hatırlatma saatini HH:MM formatında girin (Örneğin 15:40):")
+    await update.message.reply_text("Hatırlatma saatini HH:MM formatında gir (Örneğin 15:40):")
     return WAITING_FOR_TIME
 
 async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_text = update.message.text.strip()
     
     if not re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", time_text):
-        await update.message.reply_text("Hatalı format. Lütfen saati 15:40 formatında girin:")
+        await update.message.reply_text("Lütfen saati 15:40 formatında girin:")
         return WAITING_FOR_TIME
 
     context.user_data["reminder_time"] = time_text
@@ -118,8 +129,11 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     time_text = context.user_data.get("reminder_time")
     chat_id = query.message.chat_id
 
-    # Saat dilimini eşitliyoruz
-    tz = pytz.timezone("Europe/Rome")
+    # İstediğin düzenleme: Metnin sonuna saati SS:DD formatında ekliyoruz
+    final_reminder_text = f"{reminder_text} ({time_text})"
+
+    # Saat dilimini Türkiye (Europe/Istanbul) yapıyoruz
+    tz = pytz.timezone("Europe/Istanbul")
     now = datetime.datetime.now(tz)
     hour, minute = map(int, time_text.split(":"))
     
@@ -131,7 +145,7 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     job_data = {
         "chat_id": chat_id,
-        "text": reminder_text,
+        "text": final_reminder_text, # Saati sona eklenmiş yeni metin
         "importance": importance,
         "count": 0
     }
@@ -143,7 +157,7 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
         name=f"rem_{chat_id}_{target_time.timestamp()}"
     )
 
-    await query.edit_message_text(f"Hatırlatıcı kuruldu! Saat {time_text} geldiğinde bildirim alacaksınız.")
+    await query.edit_message_text(f"Hatırlatıcı kuruldu! Saat {time_text} geldiğinde bildirim alacaksın.")
     return ConversationHandler.END
 
 async def trigger_reminder(context: ContextTypes.DEFAULT_TYPE):
@@ -153,7 +167,6 @@ async def trigger_reminder(context: ContextTypes.DEFAULT_TYPE):
     importance = data["importance"]
     
     if importance == "high":
-        # 3 dakika aralıklarla max 10 kez (Okunana kadar)
         context.job_queue.run_repeating(
             send_high_importance_alert, 
             interval=180, 
@@ -162,7 +175,6 @@ async def trigger_reminder(context: ContextTypes.DEFAULT_TYPE):
             name=f"high_loop_{chat_id}_{job.name}"
         )
     else:
-        # 5 dakika aralıklarla 4 kez
         context.job_queue.run_repeating(
             send_normal_importance_alert, 
             interval=300, 
@@ -232,7 +244,10 @@ def main():
         fallbacks=[CommandHandler("iptal", cancel)]
     )
 
-    app.add_handler(CommandHandler("start", start))
+    # Hem /start hem de /yardim komutları aynı fonksiyona yönlendirildi
+    app.add_handler(CommandHandler("start", send_guide))
+    app.add_handler(CommandHandler("yardim", send_guide))
+    
     app.add_handler(CommandHandler("soru", soru))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
