@@ -102,7 +102,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 active_reminders += 1
 
     if active_reminders >= 3:
-        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını beklemelisin.")
+        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını beklemelisin veya /iptal komutu ile hepsini silebilirsin.")
         return ConversationHandler.END
 
     args = context.args
@@ -228,12 +228,21 @@ async def send_normal_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     data = job.data
     chat_id = data["chat_id"]
     
-    if data["count"] >= 4:
+    if data["count"] >= 4: # Maksimum 4 kez
         job.schedule_removal()
         return
 
     data["count"] += 1
-    await context.bot.send_message(chat_id=chat_id, text=f"/hatirlat {data['text']}")
+    
+    # Normal öncelikli mesaj için düzeltilen kısımlar (Buton eklendi, metin düzeltildi)
+    keyboard = [[InlineKeyboardButton("Okudum", callback_data=f"read_{job.name}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text=f"Hatırlatma: {data['text']}", 
+        reply_markup=reply_markup
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -248,8 +257,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         await query.edit_message_text(f"Görev tamamlandı.")
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("İşlem iptal edildi.")
+async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hem mevcut işlemi sonlandırır hem de tüm aktif hatırlatıcıları siler."""
+    chat_id = update.message.chat_id
+    removed_count = 0
+    
+    if context.job_queue:
+        for job in context.job_queue.jobs():
+            if job.name and f"_{chat_id}_" in job.name:
+                job.schedule_removal()
+                removed_count += 1
+                
+    if removed_count > 0:
+        await update.message.reply_text(f"İşlem iptal edildi ve sana ait aktif {removed_count} hatırlatıcı tamamen silindi.")
+    else:
+        await update.message.reply_text("İşlem iptal edildi. (Zaten aktif bir hatırlatıcın bulunmuyordu.)")
+        
     return ConversationHandler.END
 
 def main():
@@ -261,12 +284,13 @@ def main():
             WAITING_FOR_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_time)],
             WAITING_FOR_IMPORTANCE: [CallbackQueryHandler(receive_importance, pattern="^imp_")],
         },
-        fallbacks=[CommandHandler("iptal", cancel)],
-        allow_reentry=True  # Botun hata alındığında kilitlenmesini çözen asıl kod
+        fallbacks=[CommandHandler("iptal", cancel_all)],
+        allow_reentry=True
     )
 
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
+    app.add_handler(CommandHandler("iptal", cancel_all)) # Kullanıcı konuşma dışında da iptal edebilsin diye eklendi
     
     app.add_handler(CommandHandler("soru", soru))
     app.add_handler(conv_handler)
