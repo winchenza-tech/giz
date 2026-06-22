@@ -43,8 +43,8 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Özel Mesajda Hatırlatıcı Kurmak:\n"
         "/hatirlat [hatırlatılacak şey] [saat]\n"
         "Örnek: /hatirlat toplantıya katıl 15:40\n\n"
-        "/yardim veya /start - Bu kılavuzu tekrar gösterir."
-        "Bu botun bildirim sesini nromal mesaj bildirim sesinden farklı yapmanız önerilir"
+        "/yardim veya /start - Bu kılavuzu tekrar gösterir.\n\n"
+        "Bu botun bildirim sesini normal mesaj bildirim sesinden farklı yapmanız önerilir."
     )
     
     await update.message.reply_text(guide)
@@ -90,6 +90,19 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
+        return ConversationHandler.END
+
+    chat_id = update.message.chat_id
+
+    # Aynı anda en fazla 3 aktif hatırlatıcı sınırı kontrolü
+    active_reminders = 0
+    if context.job_queue:
+        for job in context.job_queue.jobs():
+            if job.name and f"_{chat_id}_" in job.name:
+                active_reminders += 1
+
+    if active_reminders >= 3:
+        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını beklemelisin.")
         return ConversationHandler.END
 
     args = context.args
@@ -173,7 +186,7 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if importance == "high":
         context.job_queue.run_repeating(
             send_high_importance_alert, 
-            interval=120,  # 2 dakikada bir
+            interval=120,
             first=delay_seconds, 
             data=job_data,
             name=f"high_loop_{job_id}"
@@ -181,7 +194,7 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         context.job_queue.run_repeating(
             send_normal_importance_alert, 
-            interval=300,  # 5 dakikada bir
+            interval=300,
             first=delay_seconds, 
             data=job_data,
             name=f"normal_loop_{job_id}"
@@ -195,7 +208,7 @@ async def send_high_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     data = job.data
     chat_id = data["chat_id"]
     
-    if data["count"] >= 5: # Maksimum 5 kez
+    if data["count"] >= 5:
         job.schedule_removal()
         return
 
@@ -215,7 +228,7 @@ async def send_normal_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     data = job.data
     chat_id = data["chat_id"]
     
-    if data["count"] >= 4: # Maksimum 4 kez
+    if data["count"] >= 4:
         job.schedule_removal()
         return
 
@@ -248,7 +261,8 @@ def main():
             WAITING_FOR_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_time)],
             WAITING_FOR_IMPORTANCE: [CallbackQueryHandler(receive_importance, pattern="^imp_")],
         },
-        fallbacks=[CommandHandler("iptal", cancel)]
+        fallbacks=[CommandHandler("iptal", cancel)],
+        allow_reentry=True  # Botun hata alındığında kilitlenmesini çözen asıl kod
     )
 
     app.add_handler(CommandHandler("start", send_guide))
