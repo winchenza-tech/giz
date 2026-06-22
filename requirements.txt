@@ -1,4 +1,3 @@
-python-telegram-bot
-google-generativeai
-pillow
-pytz
+python-telegram-bot[job-queue]>=20.7
+google-generativeai>=0.4.1
+pytz>=2024.1
