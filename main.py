@@ -18,9 +18,10 @@ ALLOWED_GROUP_ID = os.getenv("ALLOWED_GROUP_ID")
 if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
     raise ValueError("Lütfen Railway Variables kısmına TELEGRAM_TOKEN, GEMINI_API_KEY ve ALLOWED_GROUP_ID ekleyin.")
 
-# Kılavuz Görsel Linkleri
+# Kılavuz ve Soru Görsel Linkleri
 IMAGE_URL_1 = "https://i.ibb.co/S4yWQrHg/MG-0345.jpg"
 IMAGE_URL_2 = "https://i.ibb.co/Y748qgsP/MG-0346.jpg"
+SORU_IMAGE_URL = "https://i.ibb.co/5Xcrbv87/MG-0398.jpg"
 
 # Gemini Ayarları
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -64,12 +65,19 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Kılavuzu yükleyemedim tüh.")
 
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Railway'de ID uyuşmazlığını görebilmen için log atar
+    if update.message.chat.type != "private":
+        print(f"Gelen Grup ID: {update.message.chat.id} | Beklenen ID: {ALLOWED_GROUP_ID}")
+
     if update.message.chat.type == "private" or str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
 
     question_text = " ".join(context.args)
     if not question_text:
-        await update.message.reply_text("Bir soru girsene bu ne böyle şimdi? Örnek: /soru hava durumu nasıl?")
+        await update.message.reply_photo(
+            photo=SORU_IMAGE_URL,
+            caption="Bir soru girsene bu ne böyle şimdi? Örnek: /soru hava durumu nasıl?"
+        )
         return
 
     try:
@@ -83,7 +91,17 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         clean_response = response.text.replace("*", "")
-        await update.message.reply_text(clean_response)
+        
+        # Telegram fotoğraf altı metin sınırını aşma ihtimaline karşı güvenlik kontrolü
+        if len(clean_response) <= 1024:
+            await update.message.reply_photo(
+                photo=SORU_IMAGE_URL,
+                caption=clean_response
+            )
+        else:
+            await update.message.reply_photo(photo=SORU_IMAGE_URL)
+            await update.message.reply_text(clean_response)
+            
     except Exception as e:
         print(f"Gemini Hatası: {e}")
         await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
@@ -228,13 +246,12 @@ async def send_normal_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     data = job.data
     chat_id = data["chat_id"]
     
-    if data["count"] >= 4: # Maksimum 4 kez
+    if data["count"] >= 4:
         job.schedule_removal()
         return
 
     data["count"] += 1
     
-    # Normal öncelikli mesaj için düzeltilen kısımlar (Buton eklendi, metin düzeltildi)
     keyboard = [[InlineKeyboardButton("Okudum", callback_data=f"read_{job.name}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -258,7 +275,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"Görev tamamlandı.")
 
 async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Hem mevcut işlemi sonlandırır hem de tüm aktif hatırlatıcıları siler."""
     chat_id = update.message.chat_id
     removed_count = 0
     
@@ -290,7 +306,7 @@ def main():
 
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
-    app.add_handler(CommandHandler("iptal", cancel_all)) # Kullanıcı konuşma dışında da iptal edebilsin diye eklendi
+    app.add_handler(CommandHandler("iptal", cancel_all))
     
     app.add_handler(CommandHandler("soru", soru))
     app.add_handler(conv_handler)
