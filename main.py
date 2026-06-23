@@ -116,6 +116,11 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 max_output_tokens=150,
             )
         )
+        
+        # Eğer Gemini güvenlik filtresine takılır ve boş yanıt dönerse hatayı yakala
+        if not response.text:
+            raise ValueError("Gemini boş yanıt döndürdü (Muhtemelen güvenlik filtresine takıldı).")
+            
         clean_response = response.text.replace("*", "")
         
         # İşlem bitince animasyonu iptal et ve "bekleniyor" mesajını sil
@@ -143,7 +148,7 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         print(f"Gemini Hatası: {e}")
-        await update.message.reply_text("Bu saçma soruyu yanıtlamam.")
+        await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -159,7 +164,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 active_reminders += 1
 
     if active_reminders >= 3:
-        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını bekl veya /iptal komutu ile hepsini silebilirsin.")
+        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını bekleme veya /iptal komutu ile hepsini silebilirsin.")
         return ConversationHandler.END
 
     args = context.args
