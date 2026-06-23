@@ -29,12 +29,14 @@ GEMINI_MODEL = "gemini-2.5-flash"
 
 # Gemini Ayarları
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-# Sistem talimatı, modelin daha uzun ve kaliteli cevap vermesi için esnetildi.
-# Yıldız işaretleri Python kodunda temizleneceği için burada kısıtlama kaldırıldı.
+
+# Talimatlar, metnin düz ve sade olması ve ek açıklama yapılmaması için güncellendi.
 system_instruction_text = (
-    "Kullanıcının sorusunu yanıtla. "
-    "Cevabın mutlaka en az 5 kelimeden uzun olsun. "
+    "Sadece sorunun doğrudan cevabını ver. Yanıtına düşünme sürecini, notları, sistem talimatlarını veya meta açıklamaları asla ekleme. "
+    "Cevabın mutlaka en az 5 kelimeden oluşsun. "
     "Her paragrafın en başına mutlaka uygun bir emoji koy. "
+    "Yazı tipini veya kalınlığını değiştirme, tüm metni düz ve sade bir formatta yaz. "
+    "Markdown formatlama işaretlerini (yıldız, alt çizgi vb.) kesinlikle kullanma. "
     "Uzun cevaplarda paragrafa ayırabilirsin."
 )
 
@@ -124,14 +126,13 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         
-        # Kodun bu kısmı, AI'nin Markdown (yıldız) kullanımını temizler
-        clean_response = response.text.replace("*", "") if response and response.text else ""
-        
         animation_task.cancel()
         try: await status_msg.delete()
         except: pass
 
-        if clean_response:
+        if response and response.text:
+            # Yıldızları yine de temizliyoruz ki model yine de hata yaparsa düzeltelim
+            clean_response = response.text.replace("*", "")
             if len(clean_response) <= 1024:
                 await update.message.reply_photo(photo=SORU_IMAGE_URL, caption=clean_response)
             else:
