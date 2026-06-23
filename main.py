@@ -23,6 +23,9 @@ IMAGE_URL_1 = "https://i.ibb.co/S4yWQrHg/MG-0345.jpg"
 IMAGE_URL_2 = "https://i.ibb.co/Y748qgsP/MG-0346.jpg"
 SORU_IMAGE_URL = "https://i.ibb.co/5Xcrbv87/MG-0398.jpg"
 
+# Kullanılacak Gemini Modeli (Buradan kolayca değiştirebilirsin)
+GEMINI_MODEL = "gemini-2.5-flash"
+
 # Gemini Ayarları
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 system_instruction_text = (
@@ -82,7 +85,7 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-1.5-flash",
+            model=GEMINI_MODEL,
             contents=question_text,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction_text,
@@ -246,7 +249,7 @@ async def send_normal_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     data = job.data
     chat_id = data["chat_id"]
     
-    if data["count"] >= 4:
+    if data["count"] >= 4: # Maksimum 4 kez
         job.schedule_removal()
         return
 
