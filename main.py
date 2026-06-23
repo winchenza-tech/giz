@@ -29,11 +29,12 @@ GEMINI_MODEL = "gemini-2.5-flash"
 
 # Gemini Ayarları
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+# Sistem talimatı, modelin daha uzun ve kaliteli cevap vermesi için esnetildi.
+# Yıldız işaretleri Python kodunda temizleneceği için burada kısıtlama kaldırıldı.
 system_instruction_text = (
-    "Kullanıcının sorusunu maksimum 100 kelime olacak şekilde yanıtla. 100 kelimeden kısa olabilirse daha da kısa yanıtla. "
-    "Yanıtın en az 5 kelimeden oluşmalı. "
+    "Kullanıcının sorusunu yanıtla. "
+    "Cevabın mutlaka en az 5 kelimeden uzun olsun. "
     "Her paragrafın en başına mutlaka uygun bir emoji koy. "
-    "KESİNLİKLE hiçbir metinde '*' (yıldız) simgesini kullanma, metinleri kalın veya italik yapmaya çalışma."
     "Uzun cevaplarda paragrafa ayırabilirsin."
 )
 
@@ -123,19 +124,21 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         
+        # Kodun bu kısmı, AI'nin Markdown (yıldız) kullanımını temizler
+        clean_response = response.text.replace("*", "") if response and response.text else ""
+        
         animation_task.cancel()
         try: await status_msg.delete()
         except: pass
 
-        if response and response.text:
-            clean_response = response.text.replace("*", "")
+        if clean_response:
             if len(clean_response) <= 1024:
                 await update.message.reply_photo(photo=SORU_IMAGE_URL, caption=clean_response)
             else:
                 await update.message.reply_photo(photo=SORU_IMAGE_URL)
                 await update.message.reply_text(clean_response)
         else:
-            await update.message.reply_text("Bu saçma soruyu yanıtlamam.")
+            await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
             
     except Exception as e:
         animation_task.cancel()
@@ -156,7 +159,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 active_reminders += 1
 
     if active_reminders >= 3:
-        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını bekl veya /iptal komutu ile hepsini silebilirsin.")
+        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını bekleme veya /iptal komutu ile hepsini silebilirsin.")
         return ConversationHandler.END
 
     args = context.args
