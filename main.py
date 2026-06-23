@@ -2,6 +2,7 @@ import os
 import re
 import datetime
 import pytz
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, 
@@ -32,6 +33,7 @@ system_instruction_text = (
     "Kullanıcının sorusunu maksimum 100 kelime olacak şekilde yanıtla. 100 kelimeden kısa olabilirse daha da kısa yanıtla. "
     "Her paragrafın en başına mutlaka uygun bir emoji koy. "
     "KESİNLİKLE hiçbir metinde '*' (yıldız) simgesini kullanma, metinleri kalın veya italik yapmaya çalışma."
+    "Uzun cevaplarda paragrafa ayırabilirsin."
 )
 
 WAITING_FOR_TIME = 1
@@ -83,8 +85,29 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # --- ASENKRON BEKLEME MESAJI SİSTEMİ ---
+    status_msg = await update.message.reply_text("📖 Gizem soruyu okuyor...")
+    
+    async def loading_animation():
+        frames = [
+            "☕ Gizem zihnini açmak için kahvesini yudumluyor...",
+            "✍️ Gizem soruya cevap yazıyor..."
+        ]
+        try:
+            for frame in frames:
+                await asyncio.sleep(3)
+                await status_msg.edit_text(frame)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+            
+    animation_task = asyncio.create_task(loading_animation())
+    # ----------------------------------------
+
     try:
-        response = gemini_client.models.generate_content(
+        # Animasyonun çalışması için istek .aio ile yapıldı
+        response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=question_text,
             config=types.GenerateContentConfig(
@@ -94,6 +117,13 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         clean_response = response.text.replace("*", "")
+        
+        # İşlem bitince animasyonu iptal et ve "bekleniyor" mesajını sil
+        animation_task.cancel()
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
         
         # Telegram fotoğraf altı metin sınırını aşma ihtimaline karşı güvenlik kontrolü
         if len(clean_response) <= 1024:
@@ -106,8 +136,14 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(clean_response)
             
     except Exception as e:
+        animation_task.cancel()
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
         print(f"Gemini Hatası: {e}")
-        await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
+        await update.message.reply_text("Bu saçma soruyu yanıtlamam.")
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -123,7 +159,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 active_reminders += 1
 
     if active_reminders >= 3:
-        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını beklemelisin veya /iptal komutu ile hepsini silebilirsin.")
+        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını bekl veya /iptal komutu ile hepsini silebilirsin.")
         return ConversationHandler.END
 
     args = context.args
