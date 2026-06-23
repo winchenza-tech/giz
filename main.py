@@ -38,6 +38,7 @@ system_instruction_text = (
     "Yazı tipini veya kalınlığını değiştirme, tüm metni düz ve sade bir formatta yaz. "
     "Markdown formatlama işaretlerini (yıldız, alt çizgi vb.) kesinlikle kullanma. "
     "Uzun cevaplarda paragrafa ayırabilirsin."
+    "Soğuk ansiklopedik bir dil kullanmak yerine biraz daha samimi bir dil kullan. cevaplarda 'ablam, güzelim' şeklinde hitap edebilirsin ama çok abartma bir cevapta en fazla bir kere ama her cevapta değil eğer cevap sesli harfle başlıoyr ise bu ifadeleri kullanabilirsin. bir tanesini"
 )
 
 WAITING_FOR_TIME = 1
