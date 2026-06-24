@@ -231,13 +231,14 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         contents = [question_text] if question_text else []
         if image_data: contents.append(image_data)
 
+        # BURASI GÜNCELLENDİ: max_output_tokens 150'den 800'e çıkarıldı.
         response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=dynamic_instruction,
                 temperature=0.7,
-                max_output_tokens=150,
+                max_output_tokens=800, 
             )
         )
         
@@ -246,7 +247,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
 
         if response and response.text:
-            # Artık yıldız temizleyici (.replace("*", "")) yok. Direkt metin geliyor.
             clean_response = response.text
             if len(clean_response) <= 1024:
                 await update.message.reply_photo(photo=SORU_IMAGE_URL, caption=clean_response)
