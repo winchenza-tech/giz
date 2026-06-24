@@ -1,3 +1,4 @@
 python-telegram-bot[job-queue]>=20.7
 google-genai
 pytz>=2024.1
+matplotlib
