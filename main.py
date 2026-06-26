@@ -41,7 +41,7 @@ WAITING_FOR_IMPORTANCE = 2
 STATS_FILE = "stats.json"
 
 # Duyuru yapabilecek kullanıcı ID'leri
-ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780"]
+ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780","8150494686","8242824985"]
 
 # Duyuru hedef grup ID'si
 DUYURU_GROUP_ID = "-1003297262036"
@@ -365,7 +365,7 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Bildirimsiz
             msg = await context.bot.send_message(
                 chat_id=DUYURU_GROUP_ID,
-                text=f"📢 DUYURU\n\n{duyuru_text}",
+                text=f"📢 {duyuru_text}",
                 disable_notification=True,
             )
 
