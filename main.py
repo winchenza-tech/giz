@@ -358,7 +358,7 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Bildirimli
             msg = await context.bot.send_message(
                 chat_id=DUYURU_GROUP_ID,
-                text=f"📢 DUYURU\n\n{duyuru_text}",
+                text=f"📢{duyuru_text}",
                 disable_notification=False,
             )
         else:
