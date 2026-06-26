@@ -6,13 +6,14 @@ import asyncio
 import json
 import io
 import matplotlib
-matplotlib.use('Agg') # Sunucuda hata vermeden arka planda grafik çizmek için
+matplotlib.use('Agg')  # Sunucuda hata vermeden arka planda grafik çizmek için
 import matplotlib.pyplot as plt
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Poll
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, 
-    ContextTypes, ConversationHandler, MessageHandler, filters, PollAnswerHandler
+    Application, CommandHandler, CallbackQueryHandler,
+    ContextTypes, ConversationHandler, MessageHandler, filters,
+    PollAnswerHandler
 )
 from google import genai
 from google.genai import types
@@ -39,17 +40,12 @@ WAITING_FOR_TIME = 1
 WAITING_FOR_IMPORTANCE = 2
 STATS_FILE = "stats.json"
 
-# Duyuru yetkili kullanıcı ID'leri
-DUYURU_YETKILI_IDS = [6781642262, 8639720888, 7094870780]
-DUYURU_GRUP_ID = "-1003297262036"
+# Duyuru yapabilecek kullanıcı ID'leri
+ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780"]
 
-# Mesaj silme hedef kullanıcı ve zaman aralığı
-SILINECEK_BOT_USER_ID = 5933486341
-SILINECEK_GRUP_ID = "-5199865415"
+# Duyuru hedef grup ID'si
+DUYURU_GROUP_ID = "-1003297262036"
 
-# Duyuru conversation states
-WAITING_FOR_DUYURU_TEXT = 10
-WAITING_FOR_DUYURU_POLL = 11
 
 def load_stats():
     if os.path.exists(STATS_FILE):
@@ -57,9 +53,11 @@ def load_stats():
             return json.load(f)
     return {}
 
+
 def save_stats(stats):
     with open(STATS_FILE, "w", encoding="utf-8") as f:
         json.dump(stats, f)
+
 
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -71,11 +69,12 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Özel Mesajda Hatırlatıcı Kurmak:\n"
         "/hatirlat [hatırlatılacak şey] [saat]\n"
         "Örnek: /hatirlat toplantıya katıl 15:40\n\n"
-        "/duyuru - Gruba duyuru gönderir ve sabitler (yetkili kullanıcılar).\n\n"
+        "Özel Mesajda Duyuru:\n"
+        "/duyuru [metin] - Gruba duyuru gönderir ve sabitler.\n\n"
         "/yardim veya /start - Bu kılavuzu tekrar gösterir.\n\n"
         "Bu botun bildirim sesini normal mesaj bildirim sesinden farklı yapmanız önerilir."
     )
-    
+
     await update.message.reply_text(guide)
 
     try:
@@ -83,6 +82,7 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(chat_id=update.message.chat_id, photo=IMAGE_URL_2, caption="Adım 2: Özel Ses Seçimi")
     except Exception as e:
         await update.message.reply_text("Kılavuzu yükleyemedim tüh.")
+
 
 async def copy_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Belirli kanaldan gelen mesajları diğer gruba kopyalar."""
@@ -96,36 +96,11 @@ async def copy_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Kanal mesajı kopyalama hatası: {e}")
 
 
-# ───────────────────────────────────────────────────────
-# DEĞİŞİKLİK 4: 00:00-00:30 arası 5933486341 ID'li
-# kullanıcının -5199865415 grubundaki mesajlarını sil
-# ───────────────────────────────────────────────────────
-async def auto_delete_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Saat 00:00-00:30 arasında belirli kullanıcının mesajını anında siler."""
-    tz = pytz.timezone("Europe/Istanbul")
-    now = datetime.datetime.now(tz)
-
-    if not (now.hour == 0 and 0 <= now.minute <= 30):
-        return
-
-    if not update.message:
-        return
-
-    if update.message.from_user and update.message.from_user.id == SILINECEK_BOT_USER_ID:
-        try:
-            await update.message.delete()
-        except Exception as e:
-            print(f"Mesaj silme hatası: {e}")
-
-
-# ───────────────────────────────────────────────────────
-# DEĞİŞİKLİK 1: Profesyonel rapor + grafik Y ekseni max 70
-# ───────────────────────────────────────────────────────
 async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Message Score Bot'un mesajını okuyup grafikli rapor gönderir."""
+    """Message Score Bot'un mesajını okuyup grafikli profesyonel rapor gönderir."""
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.datetime.now(tz)
-    
+
     # Sadece 00:00 ile 00:25 arasında çalışsın
     if not (now.hour == 0 and 0 <= now.minute <= 25):
         return
@@ -136,7 +111,7 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # İstatistikleri Gemini'ye çektiriyoruz
     extract_prompt = f"Aşağıdaki mesaj istatistiği metninden 'toplam mesaj sayısını' ve 'kullanıcı (çeşitliliği) sayısını' bul. Sadece şu formatta geçerli bir JSON döndür: {{\"msg_count\": 100, \"user_count\": 10}}. Metin: {text}"
-    
+
     try:
         response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
@@ -162,59 +137,50 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
     m_counts = [stats.get(last_week_str, {}).get("msg_count", 0), stats.get(yesterday_str, {}).get("msg_count", 0), msg_count]
     u_counts = [stats.get(last_week_str, {}).get("user_count", 0), stats.get(yesterday_str, {}).get("user_count", 0), user_count]
 
-    # Grafiği Çiziyoruz
-    fig, ax1 = plt.subplots(figsize=(8, 5))
+    # Grafiği Çiziyoruz — Katılımcı sayısı maksimum 70 olacak şekilde
+    fig, ax = plt.subplots(figsize=(8, 5))
     x = range(len(labels))
     width = 0.35
 
-    # Mesaj sayısı barları (sol Y ekseni)
-    bars1 = ax1.bar([i - width/2 for i in x], m_counts, width, label='Mesaj Sayısı', color='#4A90E2')
-    ax1.set_ylabel('Mesaj Sayısı', color='#4A90E2')
-    ax1.tick_params(axis='y', labelcolor='#4A90E2')
-    ax1.set_xticks(list(x))
-    ax1.set_xticklabels(labels)
+    bars1 = ax.bar([i - width/2 for i in x], m_counts, width, label='Mesaj Sayısı', color='#2C3E50')
+    bars2 = ax.bar([i + width/2 for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
 
-    # Katılımcı sayısı barları (sağ Y ekseni, max 70)
-    ax2 = ax1.twinx()
-    bars2 = ax2.bar([i + width/2 for i in x], u_counts, width, label='Katılımcı Sayısı', color='#F5A623')
-    ax2.set_ylabel('Katılımcı Sayısı', color='#F5A623')
-    ax2.tick_params(axis='y', labelcolor='#F5A623')
-    ax2.set_ylim(0, 70)
+    ax.set_ylabel('Adet', fontsize=12, fontweight='bold')
+    ax.set_title('Grup Günlük Etkileşim Raporu', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.legend(fontsize=10)
+    ax.set_ylim(0, 70)
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
 
-    # Barların üstüne değer yaz
+    # Her barın üstüne değer yaz
     for bar in bars1:
         height = bar.get_height()
-        if height > 0:
-            ax1.text(bar.get_x() + bar.get_width() / 2., height, f'{int(height)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)),
+                ha='center', va='bottom', fontsize=9, fontweight='bold')
     for bar in bars2:
         height = bar.get_height()
-        if height > 0:
-            ax2.text(bar.get_x() + bar.get_width() / 2., height, f'{int(height)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-
-    fig.suptitle('Grup Günlük Aktiflik Kıyaslaması', fontsize=13, fontweight='bold')
-    fig.legend(loc='upper left', bbox_to_anchor=(0.12, 0.92))
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)),
+                ha='center', va='bottom', fontsize=9, fontweight='bold')
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
     buf.seek(0)
     plt.close(fig)
 
-    # Profesyonel rapor prompt'u
+    # Profesyonel raporlama promptu — espri veya ucuz motivasyon yok
     report_prompt = (
-        f"Bugün grupta {msg_count} mesaj atıldı ve {user_count} kişi katılım gösterdi. "
-        f"Dün {m_counts[1]} mesaj yazılmış ve {u_counts[1]} kişi aktifti. "
-        f"Geçen hafta aynı gün ise {m_counts[0]} mesaj ve {u_counts[0]} katılımcı vardı. "
-        f"Bu verileri kıyaslayarak kısa, profesyonel ve ciddi bir günlük özet raporu yaz. "
-        f"Maksimum 100 kelime. Espri yapma, ucuz motivasyon cümlesi kullanma, emoji kullanma. "
-        f"Kurumsal ve düzgün bir Türkçe ile yaz. Verilerdeki artış veya düşüşü net ifade et. "
-        f"Rapor bir iş ortamına uygun olsun."
+        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. "
+        f"Dün {m_counts[1]} mesaj, {u_counts[1]} kişi; geçen hafta aynı gün {m_counts[0]} mesaj, {u_counts[0]} kişi vardı. "
+        f"Bu verileri değerlendirerek gruba özel, profesyonel, analitik ve ciddi bir üslupla en fazla 100 kelimelik "
+        f"bir günlük değerlendirme raporu yaz. Espri, argo, samimi ifadeler, emoji veya ucuz motivasyon cümleleri kullanma. "
+        f"Bir iş ortamına uygun, nesnel ve yapıcı bir dil kullan."
     )
     try:
         report_response = await gemini_client.aio.models.generate_content(model=GEMINI_MODEL, contents=report_prompt)
         report_text = report_response.text
     except:
-        report_text = "Günlük grup aktivite raporu ektedir."
+        report_text = "Günlük grup etkileşim raporu ektedir."
 
     try:
         await context.bot.send_photo(
@@ -226,15 +192,11 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
         print(f"Rapor gönderilirken hata oluştu: {e}")
 
 
-# ───────────────────────────────────────────────────────
-# DEĞİŞİKLİK 2 & 3: /soru — token sınırı kaldırıldı,
-# görselli mesajlarda caption'dan /soru okunuyor
-# ───────────────────────────────────────────────────────
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != "private":
-        print(f"Gelen Grup ID: {update.message.chat.id} | Beklenen ID: {ALLOWED_GROUP_ID}")
+    if update.message.chat.type == "private":
+        return
 
-    if update.message.chat.type == "private" or str(update.message.chat.id) != ALLOWED_GROUP_ID:
+    if str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
 
     # Soru metni belirleme (Doğrudan mesaj veya caption)
@@ -276,21 +238,25 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Uzun cevaplarda paragrafa ayırabilirsin. "
     )
 
+    if image_data:
+        dynamic_instruction += "Kullanıcı bir görsel gönderdi. Görseli dikkatlice incele ve soruyu görselin içeriğine göre yanıtla. Görselde ne gördüğünü açıklamayı unutma. "
+
     if user_id == "8639720888":
         dynamic_instruction += "Lütfen kullanıcıya 'ablam' diye hitap et. Çok saygılı, kız kardeşi gibi sıcak, ablamlı bir dil kullan. "
     elif question_text.endswith("?"):
         dynamic_instruction += "Lütfen kullanıcıya 'güzelim' diye hitap et. Çok samimi, sıcak, sevimli ve flörtöz olmayan tatlı bir üslup kullan. "
 
     status_msg = await update.message.reply_text("☕ Gizem zihnini açmak için kahvesini yudumluyor...")
-    
+
     async def loading_animation():
         frames = ["📖 Gizem cevabı düşünüyor...", "✍️ Gizem soruya cevap yazıyor..."]
         try:
             for frame in frames:
                 await asyncio.sleep(3)
                 await status_msg.edit_text(frame)
-        except: pass
-            
+        except:
+            pass
+
     animation_task = asyncio.create_task(loading_animation())
 
     try:
@@ -298,7 +264,7 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if image_data:
             contents.append(image_data)
 
-        # Token sınırı kaldırıldı — 100 kelime sınırı prompt ile sağlanıyor
+        # Token sınırı kaldırıldı — sadece 100 kelime talimatı geçerli
         response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=contents,
@@ -307,10 +273,12 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 temperature=0.7,
             )
         )
-        
+
         animation_task.cancel()
-        try: await status_msg.delete()
-        except: pass
+        try:
+            await status_msg.delete()
+        except:
+            pass
 
         if response and response.text:
             clean_response = response.text
@@ -321,139 +289,126 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(clean_response)
         else:
             await update.message.reply_text("Bu saçma soruyu cevaplayamam.")
-            
+
     except Exception as e:
         animation_task.cancel()
-        try: await status_msg.delete()
-        except: pass
+        try:
+            await status_msg.delete()
+        except:
+            pass
         print(f"Gemini Hatası: {e}")
-        await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
+        await update.message.reply_text("Cevap üretilirken bir hata olutu.")
 
 
-# ───────────────────────────────────────────────────────
-# DEĞİŞİKLİK 5: /duyuru özelliği
-# ───────────────────────────────────────────────────────
+# ──────────────────────────────── Duyuru Sistemi ────────────────────────────────
+
 async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yetkili kullanıcılar özel mesajda /duyuru yazarak duyuru sürecini başlatır."""
+    """Özel mesajda /duyuru komutunu işler. Yetkili kullanıcılara anket gönderir."""
     if update.message.chat.type != "private":
-        await update.message.reply_text("Duyuru komutu yalnızca bota özel mesajda kullanılabilir.")
-        return ConversationHandler.END
+        return
 
-    user_id = update.message.from_user.id
-    if user_id not in DUYURU_YETKILI_IDS:
-        await update.message.reply_text("Bu komutu kullanma yetkiniz bulunmamaktadır.")
-        return ConversationHandler.END
+    user_id = str(update.message.from_user.id)
+    if user_id not in ALLOWED_DUYURU_USERS:
+        await update.message.reply_text("Bu komutu kullanma yetkiniz bulunmuyor.")
+        return
 
-    await update.message.reply_text("Gruba göndermek istediğiniz duyuru metnini yazın:")
-    return WAITING_FOR_DUYURU_TEXT
+    text = update.message.text or update.message.caption or ""
+    duyuru_text = re.sub(r'^/duyuru\s*', '', text, flags=re.IGNORECASE).strip()
 
-
-async def duyuru_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Duyuru metnini alır ve bildirim tercihini sorar."""
-    duyuru_text = update.message.text.strip()
     if not duyuru_text:
-        await update.message.reply_text("Duyuru metni boş olamaz. Lütfen tekrar yazın:")
-        return WAITING_FOR_DUYURU_TEXT
+        await update.message.reply_text("Duyuru metnini yazmalısın. Örnek: /duyuru Yarın saat 14:00'te Zenithar'a ibadet var.")
+        return
 
+    # Duyuru metnini sakla
     context.user_data["duyuru_text"] = duyuru_text
 
-    # Anket olarak bildirim tercihini sor
-    poll_message = await update.message.reply_poll(
-        question="Bu duyuru nasıl sabitlensin?",
-        options=["Bildirimli sabitle (üyelere bildirim gider)", "Bildirimsiz sabitle (sessiz sabitleme)"],
+    # Anket gönder
+    message = await update.message.reply_poll(
+        question="Duyuru nasıl paylaşılsın?",
+        options=["📢 Bildirimli Sabitle", "📌 Bildirimsiz Sabitle"],
         is_anonymous=False,
-        allows_multiple_answers=False,
     )
-    context.user_data["duyuru_poll_id"] = poll_message.poll.id
-    context.user_data["duyuru_chat_id"] = update.message.chat_id
-    return WAITING_FOR_DUYURU_POLL
+
+    # Anket bilgilerini bot_data'ya kaydet (PollAnswerHandler'dan erişmek için)
+    context.bot_data[f"duyuru_poll_{message.poll.id}"] = {
+        "chat_id": update.message.chat_id,
+        "user_id": user_id,
+        "duyuru_text": duyuru_text,
+    }
 
 
 async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Anket yanıtını alır, duyuruyu gruba gönderir ve sabitler."""
+    """Anket cevabını işler ve duyuruyu gruba gönderir."""
     poll_answer = update.poll_answer
-    user_id = poll_answer.user.id
+    poll_id = poll_answer.poll_id
 
-    if user_id not in DUYURU_YETKILI_IDS:
+    poll_data = context.bot_data.get(f"duyuru_poll_{poll_id}")
+    if not poll_data:
         return
 
-    # user_data'ya erişmek için chat_id gerekli
-    chat_data_key = f"duyuru_{user_id}"
-
-    # Poll answer handler'da context.user_data doğrudan erişilemez,
-    # bu yüzden bot_data üzerinden geçici veri saklıyoruz.
-    bot_data = context.bot_data
-    duyuru_info = bot_data.get(chat_data_key)
-
-    if not duyuru_info:
+    option_ids = poll_answer.option_ids
+    if not option_ids:
         return
 
-    duyuru_text = duyuru_info.get("duyuru_text", "")
-    chat_id = duyuru_info.get("duyuru_chat_id")
-
-    if not duyuru_text:
-        return
-
-    # Seçilen şık: 0 = bildirimli, 1 = bildirimsiz
-    selected_option = poll_answer.option_ids[0] if poll_answer.option_ids else 1
-    disable_notification = (selected_option == 1)
+    selected = option_ids[0]  # 0 = Bildirimli, 1 = Bildirimsiz
+    duyuru_text = poll_data["duyuru_text"]
 
     try:
-        # Duyuruyu gruba gönder
-        sent_message = await context.bot.send_message(
-            chat_id=DUYURU_GRUP_ID,
-            text=duyuru_text,
-            disable_notification=disable_notification
-        )
+        if selected == 0:
+            # Bildirimli
+            msg = await context.bot.send_message(
+                chat_id=DUYURU_GROUP_ID,
+                text=f"📢 DUYURU\n\n{duyuru_text}",
+                disable_notification=False,
+            )
+        else:
+            # Bildirimsiz
+            msg = await context.bot.send_message(
+                chat_id=DUYURU_GROUP_ID,
+                text=f"📢 DUYURU\n\n{duyuru_text}",
+                disable_notification=True,
+            )
+
         # Mesajı sabitle
-        await context.bot.pin_chat_message(
-            chat_id=DUYURU_GRUP_ID,
-            message_id=sent_message.message_id,
-            disable_notification=disable_notification
-        )
-        # Kullanıcıya bilgi ver
-        bildirim_durumu = "bildirimli" if not disable_notification else "bildirimsiz"
+        await msg.pin(disable_notification=True)
+
+        # Yetkiliye bilgi ver
         await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"Duyuru başarıyla gruba gönderildi ve {bildirim_durumu} olarak sabitlendi."
+            chat_id=poll_data["chat_id"],
+            text="✅ Duyuru gruba gönderildi. Aferin"
         )
     except Exception as e:
         print(f"Duyuru gönderme hatası: {e}")
         await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"Duyuru gönderilirken bir hata oluştu: {e}"
+            chat_id=poll_data["chat_id"],
+            text="❌ Duyuru gönderilirken bir hata olutu. ."
         )
 
-    # Geçici veriyi temizle
-    bot_data.pop(chat_data_key, None)
+    # Temizlik
+    del context.bot_data[f"duyuru_poll_{poll_id}"]
 
 
-async def duyuru_save_to_bot_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Duyuru metnini alır, bot_data'ya kaydeder ve anketi gönderir."""
-    duyuru_text = update.message.text.strip()
-    if not duyuru_text:
-        await update.message.reply_text("Duyuru metni boş olamaz. Lütfen tekrar yazın:")
-        return WAITING_FOR_DUYURU_TEXT
+# ──────────────────────────── Mesaj Silme (00:00-00:30) ────────────────────────────
 
-    user_id = update.message.from_user.id
-    chat_id = update.message.chat_id
+async def auto_delete_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """00:00-00:30 arasında 5933486341 ID'li kullanıcının mesajlarını anında siler."""
+    tz = pytz.timezone("Europe/Istanbul")
+    now = datetime.datetime.now(tz)
 
-    # bot_data'ya kaydet (poll_answer handler'dan erişilebilsin)
-    chat_data_key = f"duyuru_{user_id}"
-    context.bot_data[chat_data_key] = {
-        "duyuru_text": duyuru_text,
-        "duyuru_chat_id": chat_id,
-    }
+    if not (now.hour == 0 and 0 <= now.minute <= 30):
+        return
 
-    # Anket olarak bildirim tercihini sor
-    await update.message.reply_poll(
-        question="Bu duyuru nasıl sabitlensin?",
-        options=["Bildirimli sabitle (üyelere bildirim gider)", "Bildirimsiz sabitle (sessiz sabitleme)"],
-        is_anonymous=False,
-        allows_multiple_answers=False,
-    )
-    return ConversationHandler.END
+    if str(update.message.from_user.id) != "5933486341":
+        return
 
+    try:
+        await update.message.delete()
+        print(f"Silindi: {now.strftime('%H:%M')} - Kullanıcı 5933486341 mesajı silindi.")
+    except Exception as e:
+        print(f"Mesaj silme hatası: {e}")
+
+
+# ──────────────────────────────── Hatırlatıcı Sistemi ────────────────────────────────
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -467,7 +422,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 active_reminders += 1
 
     if active_reminders >= 3:
-        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını bekl veya /iptal komutu ile hepsini silebilirsin.")
+        await update.message.reply_text("Şu anda aktif 3 adet hatırlatıcın bulunuyor. Daha fazla ekleyebilmek için mevcut olanlardan birinin tamamlanmasını bekle veya /iptal komutu ile hepsini silebilirsin.")
         return ConversationHandler.END
 
     args = context.args
@@ -476,7 +431,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     possible_time = args[-1]
-    
+
     if re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", possible_time):
         time_text = possible_time
         reminder_text = " ".join(args[:-1])
@@ -495,6 +450,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Hatırlatma saatini SS:DD formatında gir (Örneğin 15:40):")
         return WAITING_FOR_TIME
 
+
 async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_text = update.message.text.strip()
     if not re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", time_text):
@@ -505,6 +461,7 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Bu hatırlatıcının önem derecesi nedir?", reply_markup=reply_markup)
     return WAITING_FOR_IMPORTANCE
+
 
 async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -518,7 +475,8 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     now = datetime.datetime.now(tz)
     hour, minute = map(int, time_text.split(":"))
     target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target_time < now: target_time += datetime.timedelta(days=1)
+    if target_time < now:
+        target_time += datetime.timedelta(days=1)
     delay_seconds = (target_time - now).total_seconds()
     job_data = {"chat_id": chat_id, "text": final_reminder_text, "count": 0}
     job_id = f"rem_{chat_id}_{target_time.timestamp()}"
@@ -529,25 +487,32 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(f"Hatırlatıcı kuruldu! Saat {time_text} geldiğinde bildirim alacaksın.")
     return ConversationHandler.END
 
+
 async def send_high_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     data = job.data
     chat_id = data["chat_id"]
-    if data["count"] >= 5: job.schedule_removal(); return
+    if data["count"] >= 5:
+        job.schedule_removal()
+        return
     data["count"] += 1
     keyboard = [[InlineKeyboardButton("Okudum", callback_data=f"read_{job.name}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(chat_id=chat_id, text=f"Hatırlatma: {data['text']}", reply_markup=reply_markup)
 
+
 async def send_normal_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     data = job.data
     chat_id = data["chat_id"]
-    if data["count"] >= 4: job.schedule_removal(); return
+    if data["count"] >= 4:
+        job.schedule_removal()
+        return
     data["count"] += 1
     keyboard = [[InlineKeyboardButton("Okudum", callback_data=f"read_{job.name}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(chat_id=chat_id, text=f"Hatırlatma: {data['text']}", reply_markup=reply_markup)
+
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -555,8 +520,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith("read_"):
         job_name = query.data.split("read_", 1)[1]
         current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs: job.schedule_removal()
-        await query.edit_message_text(f"Görev tamamlandı.")
+        for job in current_jobs:
+            job.schedule_removal()
+        await query.edit_message_text("Görev tamamlandı.")
+
 
 async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
@@ -566,14 +533,16 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if job.name and f"_{chat_id}_" in job.name:
                 job.schedule_removal()
                 removed_count += 1
-    if removed_count > 0: await update.message.reply_text(f"İşlem iptal edildi ve sana ait aktif {removed_count} hatırlatıcı tamamen silindi.")
-    else: await update.message.reply_text("İşlem iptal edildi. (Zaten aktif bir hatırlatıcın bulunmuyordu.)")
+    if removed_count > 0:
+        await update.message.reply_text(f"İşlem iptal edildi ve sana ait aktif {removed_count} hatırlatıcı tamamen silindi.")
+    else:
+        await update.message.reply_text("İşlem iptal edildi. (Zaten aktif bir hatırlatıcın bulunmuyordu.)")
     return ConversationHandler.END
+
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # Hatırlatıcı conversation handler
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("hatirlat", hatirlat_start)],
         states={
@@ -584,48 +553,32 @@ def main():
         allow_reentry=True
     )
 
-    # Duyuru conversation handler
-    duyuru_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("duyuru", duyuru_start)],
-        states={
-            WAITING_FOR_DUYURU_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, duyuru_save_to_bot_data)],
-        },
-        fallbacks=[CommandHandler("iptal", cancel_all)],
-        allow_reentry=True
-    )
-    
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
     app.add_handler(CommandHandler("iptal", cancel_all))
     app.add_handler(CommandHandler("soru", soru))
 
-    # Görselli /soru mesajları için: caption'da /soru geçen fotoğraf mesajları
-    app.add_handler(MessageHandler(
-        filters.PHOTO & filters.CaptionRegex(r'^/soru') & filters.Chat(chat_id=int(ALLOWED_GROUP_ID)),
-        soru
-    ))
-    
+    # Duyuru komutu (sadece özel mesajda)
+    app.add_handler(CommandHandler("duyuru", duyuru_start))
+
+    # Duyuru anket cevabı dinleyicisi
+    app.add_handler(PollAnswerHandler(duyuru_poll_answer))
+
     # Kanal dinleyicisi (Otomatik mesaj kopyalama)
     app.add_handler(MessageHandler(filters.Chat(chat_id=-1003613910089) & filters.UpdateType.CHANNEL_POST, copy_channel_post))
-    
-    # Message Score Bot Dinleyicisi
+
+    # Message Score Bot Dinleyicisi — 00:00-00:25 arası rapor
     app.add_handler(MessageHandler(filters.Chat(chat_id=-1003297262036) & filters.User(user_id=5933486341), score_bot_listener))
 
-    # Mesaj silme dinleyicisi: -5199865415 grubunda 5933486341 ID'li kullanıcının mesajları
-    app.add_handler(MessageHandler(
-        filters.Chat(chat_id=int(SILINECEK_GRUP_ID)) & filters.User(user_id=SILINECEK_BOT_USER_ID),
-        auto_delete_listener
-    ))
+    # 00:00-00:30 arası 5933486341 kullanıcısının mesajlarını silme
+    app.add_handler(MessageHandler(filters.User(user_id=5933486341), auto_delete_messages))
 
     app.add_handler(conv_handler)
-    app.add_handler(duyuru_conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
 
-    # Duyuru anket yanıt handler'ı
-    app.add_handler(PollAnswerHandler(duyuru_poll_answer))
-    
     print("Bot başlatılıyor...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
