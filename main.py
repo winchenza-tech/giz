@@ -136,36 +136,55 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
     labels = ['Geçen Hafta', 'Dün', 'Bugün']
     m_counts = [stats.get(last_week_str, {}).get("msg_count", 0), stats.get(yesterday_str, {}).get("msg_count", 0), msg_count]
     u_counts = [stats.get(last_week_str, {}).get("user_count", 0), stats.get(yesterday_str, {}).get("user_count", 0), user_count]
+    
+    # Kişi başı ortalama mesajları hesapla
+    avg_counts = [round(m / u) if u > 0 else 0 for m, u in zip(m_counts, u_counts)]
 
     # Grafiği Çiziyoruz
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax1 = plt.subplots(figsize=(9, 6))
     x = range(len(labels))
-    width = 0.35
+    width = 0.25  # 3 sütun olacağı için genişliği biraz daha daralttık
 
-    bars1 = ax.bar([i - width/2 for i in x], m_counts, width, label='Mesaj Sayısı', color='#2C3E50')
-    bars2 = ax.bar([i + width/2 for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
+    # İkinci Y eksenini oluşturuyoruz (TwinX)
+    ax2 = ax1.twinx()
 
-    ax.set_ylabel('Adet', fontsize=12, fontweight='bold')
-    ax.set_title('Grup Günlük Etkileşim Raporu', fontsize=14, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=11)
-    ax.legend(fontsize=10)
+    # Çubukları oluşturuyoruz
+    bars1 = ax1.bar([i - width for i in x], m_counts, width, label='Toplam Mesaj', color='#2C3E50')
+    bars2 = ax2.bar([i for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
+    bars3 = ax2.bar([i + width for i in x], avg_counts, width, label='Ortalama (Kişi Başı)', color='#F1C40F') # Sarı Renk
+
+    # Eksen İsimlendirmeleri
+    ax1.set_ylabel('Toplam Mesaj Sayısı (Sol Eksen)', fontsize=11, fontweight='bold', color='#2C3E50')
+    ax2.set_ylabel('Katılımcı & Ortalama (Sağ Eksen)', fontsize=11, fontweight='bold')
+    ax1.set_title('Grup Günlük Etkileşim Raporu', fontsize=14, fontweight='bold')
     
-    # DİNAMİK Y EKSENİ (photo_invalid_dimensions hatasını önler)
-    all_values = m_counts + u_counts
-    max_val = max(all_values) if all_values else 10
-    ax.set_ylim(0, max_val + (max_val * 0.15)) # En yüksek değerin üzerine %15 boşluk bırak
-    ax.grid(axis='y', alpha=0.3, linestyle='--')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, fontsize=11)
+    
+    # DİNAMİK Y EKSENLERİ (TwinX ile Ayrıştırılmış)
+    max_m = max(m_counts) if m_counts else 10
+    ax1.set_ylim(0, max_m + (max_m * 0.15)) # Sol taraf sadece mesajlara odaklı
+    
+    max_u_avg = max(max(u_counts), max(avg_counts)) if (u_counts or avg_counts) else 10
+    ax2.set_ylim(0, max(75, max_u_avg) + 10) # Sağ taraf katılımcı ve ortalamaya odaklı (Max 70 standardına uygun)
 
-    # Her barın üstüne değer yaz
+    ax1.grid(axis='y', alpha=0.2, linestyle='--')
+
+    # Değerleri sütunların üzerine yazma
     for bar in bars1:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)),
-                ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax1.text(bar.get_x() + bar.get_width()/2., height + (max_m * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
     for bar in bars2:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)),
-                ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+    for bar in bars3:
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    # Efsanevi tabloyu (Legend) birleştirme
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
 
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
@@ -174,7 +193,7 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Profesyonel raporlama promptu — espri veya ucuz motivasyon yok
     report_prompt = (
-        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. "
+        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. Kişi başı ortalama {avg_counts[2]} mesaj düştü. "
         f"Dün {m_counts[1]} mesaj, {u_counts[1]} kişi; geçen hafta aynı gün {m_counts[0]} mesaj, {u_counts[0]} kişi vardı. "
         f"Bu verileri değerlendirerek gruba özel, profesyonel, analitik ve ciddi bir üslupla en fazla 100 kelimelik "
         f"bir günlük değerlendirme raporu yaz. Espri, argo, samimi ifadeler, emoji veya ucuz motivasyon cümleleri kullanma. "
@@ -190,7 +209,7 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         await context.bot.send_photo(
             chat_id="-5199865415",
-            photo=buf.getvalue(), # Doğrudan bayt olarak gönderiyoruz
+            photo=buf.getvalue(), 
             caption=report_text
         )
     except Exception as e:
@@ -238,38 +257,54 @@ async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     yesterday_str = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     last_week_str = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
 
-    # Geçmiş veriler için load yap, test olduğu için kaydetme (Save yapmıyoruz)
+    # Geçmiş veriler için load yap, test olduğu için kaydetme
     stats = load_stats()
     
     labels = ['Geçen Hafta', 'Dün', 'Bugün (TEST)']
     m_counts = [stats.get(last_week_str, {}).get("msg_count", 0), stats.get(yesterday_str, {}).get("msg_count", 0), msg_count]
     u_counts = [stats.get(last_week_str, {}).get("user_count", 0), stats.get(yesterday_str, {}).get("user_count", 0), user_count]
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    x = range(len(labels))
-    width = 0.35
-
-    bars1 = ax.bar([i - width/2 for i in x], m_counts, width, label='Mesaj Sayısı', color='#2C3E50')
-    bars2 = ax.bar([i + width/2 for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
-
-    ax.set_ylabel('Adet', fontsize=12, fontweight='bold')
-    ax.set_title('Grup Günlük Etkileşim Raporu (TEST)', fontsize=14, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=11)
-    ax.legend(fontsize=10)
     
-    # DİNAMİK Y EKSENİ (photo_invalid_dimensions hatasını önler)
-    all_values = m_counts + u_counts
-    max_val = max(all_values) if all_values else 10
-    ax.set_ylim(0, max_val + (max_val * 0.15))
-    ax.grid(axis='y', alpha=0.3, linestyle='--')
+    # Ortalama hesaplama
+    avg_counts = [round(m / u) if u > 0 else 0 for m, u in zip(m_counts, u_counts)]
+
+    fig, ax1 = plt.subplots(figsize=(9, 6))
+    x = range(len(labels))
+    width = 0.25
+
+    ax2 = ax1.twinx()
+
+    bars1 = ax1.bar([i - width for i in x], m_counts, width, label='Toplam Mesaj', color='#2C3E50')
+    bars2 = ax2.bar([i for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
+    bars3 = ax2.bar([i + width for i in x], avg_counts, width, label='Ortalama (Kişi Başı)', color='#F1C40F')
+
+    ax1.set_ylabel('Toplam Mesaj Sayısı (Sol Eksen)', fontsize=11, fontweight='bold', color='#2C3E50')
+    ax2.set_ylabel('Katılımcı & Ortalama (Sağ Eksen)', fontsize=11, fontweight='bold')
+    ax1.set_title('Grup Günlük Etkileşim Raporu (TEST)', fontsize=14, fontweight='bold')
+    
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, fontsize=11)
+
+    max_m = max(m_counts) if m_counts else 10
+    ax1.set_ylim(0, max_m + (max_m * 0.15))
+    
+    max_u_avg = max(max(u_counts), max(avg_counts)) if (u_counts or avg_counts) else 10
+    ax2.set_ylim(0, max(75, max_u_avg) + 10)
+
+    ax1.grid(axis='y', alpha=0.2, linestyle='--')
 
     for bar in bars1:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax1.text(bar.get_x() + bar.get_width()/2., height + (max_m * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
     for bar in bars2:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+    for bar in bars3:
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
 
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
@@ -277,11 +312,11 @@ async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     plt.close(fig)
 
     report_prompt = (
-        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. "
+        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. Kişi başı ortalama {avg_counts[2]} mesaj düştü. "
         f"Dün {m_counts[1]} mesaj, {u_counts[1]} kişi; geçen hafta aynı gün {m_counts[0]} mesaj, {u_counts[0]} kişi vardı. "
         f"Bu verileri değerlendirerek gruba özel, profesyonel, analitik ve ciddi bir üslupla en fazla 100 kelimelik "
         f"bir günlük değerlendirme raporu yaz. Espri, argo, samimi ifadeler, emoji veya ucuz motivasyon cümleleri kullanma. "
-        f"Bir iş ortamına uygun, nesnel ve yapıcı bir dil kullan."
+        f"Bir iş ortamına uygun, nesnel ve yapıcı bir dil kullan.kalın yazmaya çalışma tüm metinler aynı fontta olsun"
     )
     
     try:
@@ -294,7 +329,7 @@ async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await msg.delete()
         await context.bot.send_photo(
             chat_id=update.message.chat_id,
-            photo=buf.getvalue(), # Doğrudan bayt olarak gönderiyoruz
+            photo=buf.getvalue(), 
             caption=f"🧪 **TEST RAPORU:**\n\n{report_text}"
         )
     except Exception as e:
