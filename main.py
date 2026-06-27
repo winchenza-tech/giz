@@ -137,7 +137,7 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
     m_counts = [stats.get(last_week_str, {}).get("msg_count", 0), stats.get(yesterday_str, {}).get("msg_count", 0), msg_count]
     u_counts = [stats.get(last_week_str, {}).get("user_count", 0), stats.get(yesterday_str, {}).get("user_count", 0), user_count]
 
-    # Grafiği Çiziyoruz — Katılımcı sayısı maksimum 70 olacak şekilde
+    # Grafiği Çiziyoruz
     fig, ax = plt.subplots(figsize=(8, 5))
     x = range(len(labels))
     width = 0.35
@@ -150,17 +150,21 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=11)
     ax.legend(fontsize=10)
-    ax.set_ylim(0, 70)
+    
+    # DİNAMİK Y EKSENİ (photo_invalid_dimensions hatasını önler)
+    all_values = m_counts + u_counts
+    max_val = max(all_values) if all_values else 10
+    ax.set_ylim(0, max_val + (max_val * 0.15)) # En yüksek değerin üzerine %15 boşluk bırak
     ax.grid(axis='y', alpha=0.3, linestyle='--')
 
     # Her barın üstüne değer yaz
     for bar in bars1:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)),
+        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)),
                 ha='center', va='bottom', fontsize=9, fontweight='bold')
     for bar in bars2:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)),
+        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)),
                 ha='center', va='bottom', fontsize=9, fontweight='bold')
 
     buf = io.BytesIO()
@@ -186,7 +190,7 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         await context.bot.send_photo(
             chat_id="-5199865415",
-            photo=buf,
+            photo=buf.getvalue(), # Doğrudan bayt olarak gönderiyoruz
             caption=report_text
         )
     except Exception as e:
@@ -209,7 +213,7 @@ async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     test_text = re.sub(r'^/dene\s*', '', text, flags=re.IGNORECASE).strip()
 
     if not test_text:
-        await update.message.reply_text("Test edilecek metni eksik girdin. Örnek: /dene Toplam: 50, Kullanıcı: 10")
+        await update.message.reply_text("Test edilecek metni eksik girdin. Örnek: /dene Toplam mesaj: 2308 Toplam aktif kullanıcı: 43")
         return
 
     msg = await update.message.reply_text("Test verisi işleniyor, lütfen bekleyin...")
@@ -253,15 +257,19 @@ async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=11)
     ax.legend(fontsize=10)
-    ax.set_ylim(0, max(max(u_counts), 70) + 10)  # Değere göre dinamik yükseklik 
+    
+    # DİNAMİK Y EKSENİ (photo_invalid_dimensions hatasını önler)
+    all_values = m_counts + u_counts
+    max_val = max(all_values) if all_values else 10
+    ax.set_ylim(0, max_val + (max_val * 0.15))
     ax.grid(axis='y', alpha=0.3, linestyle='--')
 
     for bar in bars1:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
     for bar in bars2:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax.text(bar.get_x() + bar.get_width()/2., height + (max_val * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
 
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
@@ -286,7 +294,7 @@ async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await msg.delete()
         await context.bot.send_photo(
             chat_id=update.message.chat_id,
-            photo=buf,
+            photo=buf.getvalue(), # Doğrudan bayt olarak gönderiyoruz
             caption=f"🧪 **TEST RAPORU:**\n\n{report_text}"
         )
     except Exception as e:
@@ -365,7 +373,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if image_data:
             contents.append(image_data)
 
-        # Token sınırı kaldırıldı — sadece 100 kelime talimatı geçerli
         response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=contents,
