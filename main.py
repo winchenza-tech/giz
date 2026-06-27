@@ -97,12 +97,12 @@ async def copy_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Message Score Bot'un mesajını okuyup grafikli profesyonel rapor gönderir."""
+    """Message Score Bot'un mesajını okuyup grafikli profesyonel rapor gönderir ve mesajını siler."""
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.datetime.now(tz)
 
-    # Sadece 00:00 ile 00:25 arasında çalışsın
-    if not (now.hour == 0 and 0 <= now.minute <= 25):
+    # 00:00 ile 00:30 arasında çalışsın
+    if not (now.hour == 0 and 0 <= now.minute <= 30):
         return
 
     text = update.message.text or update.message.caption
@@ -182,6 +182,7 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except:
         report_text = "Günlük grup etkileşim raporu ektedir."
 
+    # Raporu diğer gruba gönder
     try:
         await context.bot.send_photo(
             chat_id="-5199865415",
@@ -190,6 +191,106 @@ async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
     except Exception as e:
         print(f"Rapor gönderilirken hata oluştu: {e}")
+
+    # İşlem tamamlandığında asıl rapor mesajını sil
+    try:
+        await update.message.delete()
+        print("Rapor başarıyla gönderildi ve 5933486341 ID'li orijinal mesaj silindi.")
+    except Exception as e:
+        print(f"Orijinal mesaj silinemedi: {e}")
+
+
+async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/dene komutu ile botun özel mesajından istatistikleri test etmek için."""
+    if update.message.chat.type != "private":
+        return
+
+    text = update.message.text or update.message.caption or ""
+    test_text = re.sub(r'^/dene\s*', '', text, flags=re.IGNORECASE).strip()
+
+    if not test_text:
+        await update.message.reply_text("Test edilecek metni eksik girdin. Örnek: /dene Toplam: 50, Kullanıcı: 10")
+        return
+
+    msg = await update.message.reply_text("Test verisi işleniyor, lütfen bekleyin...")
+
+    extract_prompt = f"Aşağıdaki mesaj istatistiği metninden 'toplam mesaj sayısını' ve 'kullanıcı (çeşitliliği) sayısını' bul. Sadece şu formatta geçerli bir JSON döndür: {{\"msg_count\": 100, \"user_count\": 10}}. Metin: {test_text}"
+
+    try:
+        response = await gemini_client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=extract_prompt
+        )
+        json_str = response.text.strip().strip('`').replace('json\n', '')
+        data = json.loads(json_str)
+        msg_count = data.get("msg_count", 0)
+        user_count = data.get("user_count", 0)
+    except Exception as e:
+        await msg.edit_text(f"Veri çıkarılırken hata oluştu: {e}")
+        return
+
+    tz = pytz.timezone("Europe/Istanbul")
+    now = datetime.datetime.now(tz)
+    yesterday_str = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    last_week_str = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+
+    # Geçmiş veriler için load yap, test olduğu için kaydetme (Save yapmıyoruz)
+    stats = load_stats()
+    
+    labels = ['Geçen Hafta', 'Dün', 'Bugün (TEST)']
+    m_counts = [stats.get(last_week_str, {}).get("msg_count", 0), stats.get(yesterday_str, {}).get("msg_count", 0), msg_count]
+    u_counts = [stats.get(last_week_str, {}).get("user_count", 0), stats.get(yesterday_str, {}).get("user_count", 0), user_count]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = range(len(labels))
+    width = 0.35
+
+    bars1 = ax.bar([i - width/2 for i in x], m_counts, width, label='Mesaj Sayısı', color='#2C3E50')
+    bars2 = ax.bar([i + width/2 for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
+
+    ax.set_ylabel('Adet', fontsize=12, fontweight='bold')
+    ax.set_title('Grup Günlük Etkileşim Raporu (TEST)', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.legend(fontsize=10)
+    ax.set_ylim(0, max(max(u_counts), 70) + 10)  # Değere göre dinamik yükseklik 
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
+
+    for bar in bars1:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+    for bar in bars2:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
+    buf.seek(0)
+    plt.close(fig)
+
+    report_prompt = (
+        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. "
+        f"Dün {m_counts[1]} mesaj, {u_counts[1]} kişi; geçen hafta aynı gün {m_counts[0]} mesaj, {u_counts[0]} kişi vardı. "
+        f"Bu verileri değerlendirerek gruba özel, profesyonel, analitik ve ciddi bir üslupla en fazla 100 kelimelik "
+        f"bir günlük değerlendirme raporu yaz. Espri, argo, samimi ifadeler, emoji veya ucuz motivasyon cümleleri kullanma. "
+        f"Bir iş ortamına uygun, nesnel ve yapıcı bir dil kullan."
+    )
+    
+    try:
+        report_response = await gemini_client.aio.models.generate_content(model=GEMINI_MODEL, contents=report_prompt)
+        report_text = report_response.text
+    except:
+        report_text = "Günlük grup etkileşim raporu ektedir."
+
+    try:
+        await msg.delete()
+        await context.bot.send_photo(
+            chat_id=update.message.chat_id,
+            photo=buf,
+            caption=f"🧪 **TEST RAPORU:**\n\n{report_text}"
+        )
+    except Exception as e:
+        await context.bot.send_message(chat_id=update.message.chat_id, text=f"Test sırasında hata oluştu: {e}")
 
 
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,7 +302,7 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Soru metni belirleme (Doğrudan mesaj veya caption)
     text = update.message.text or update.message.caption or ""
-    question_text = re.sub(r'^/soru\s*', '', text, flags=re.IGNORECASE).strip()
+    question_text = re.sub(r'(?i)^/soru\s*', '', text).strip()
 
     # Eğer metin yoksa alıntılanan mesajdaki metne bak
     if not question_text and update.message.reply_to_message:
@@ -388,26 +489,6 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     del context.bot_data[f"duyuru_poll_{poll_id}"]
 
 
-# ──────────────────────────── Mesaj Silme (00:00-00:30) ────────────────────────────
-
-async def auto_delete_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """00:00-00:30 arasında 5933486341 ID'li kullanıcının mesajlarını anında siler."""
-    tz = pytz.timezone("Europe/Istanbul")
-    now = datetime.datetime.now(tz)
-
-    if not (now.hour == 0 and 0 <= now.minute <= 30):
-        return
-
-    if str(update.message.from_user.id) != "5933486341":
-        return
-
-    try:
-        await update.message.delete()
-        print(f"Silindi: {now.strftime('%H:%M')} - Kullanıcı 5933486341 mesajı silindi.")
-    except Exception as e:
-        print(f"Mesaj silme hatası: {e}")
-
-
 # ──────────────────────────────── Hatırlatıcı Sistemi ────────────────────────────────
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -540,6 +621,30 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# ──────────────────────────────── Anti Spam (OctopusGame_Bot) ────────────────────────────────
+
+async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Octopusgame_bot'un reklam ve davet linklerini doğrudan engeller."""
+    if not update.message:
+        return
+        
+    user = update.message.from_user
+    if not user or not user.username:
+        return
+        
+    if user.username.lower() == "octopusgame_bot":
+        text = update.message.text or update.message.caption or ""
+        # Türkçe karakter uyumlu (ı/i), boşlukları tolere eden sağlam bir regex
+        spam_pattern = r'(?i)(t\.me/?|telegram\.me/?|aram[ıi]za|kat[ıi]l|grubumuza)'
+        
+        if re.search(spam_pattern, text):
+            try:
+                await update.message.delete()
+                print("OctopusGame spamı başarıyla silindi.")
+            except Exception as e:
+                print(f"Spam mesaj silinemedi: {e}")
+
+
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -553,10 +658,18 @@ def main():
         allow_reentry=True
     )
 
+    # SPAM KONTROLÜ (En yüksek öncelik ile bağımsız çalışması için group=-1 veriyoruz)
+    app.add_handler(MessageHandler(filters.ALL, anti_spam_octopus), group=-1)
+
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
     app.add_handler(CommandHandler("iptal", cancel_all))
-    app.add_handler(CommandHandler("soru", soru))
+    
+    # Soru Komutu: Artık CommandHandler yerine Regex kullanarak hem salt metin hem de fotoğraflı açıklamaları yakalıyoruz
+    app.add_handler(MessageHandler(filters.Regex(r'(?i)^/soru'), soru))
+    
+    # Test Komutu (Özel mesajda)
+    app.add_handler(CommandHandler("dene", test_rapor_command))
 
     # Duyuru komutu (sadece özel mesajda)
     app.add_handler(CommandHandler("duyuru", duyuru_start))
@@ -567,11 +680,8 @@ def main():
     # Kanal dinleyicisi (Otomatik mesaj kopyalama)
     app.add_handler(MessageHandler(filters.Chat(chat_id=-1003613910089) & filters.UpdateType.CHANNEL_POST, copy_channel_post))
 
-    # Message Score Bot Dinleyicisi — 00:00-00:25 arası rapor
+    # Message Score Bot Dinleyicisi — 00:00-00:30 arası rapor çıkarır ve mesajı siler
     app.add_handler(MessageHandler(filters.Chat(chat_id=-1003297262036) & filters.User(user_id=5933486341), score_bot_listener))
-
-    # 00:00-00:30 arası 5933486341 kullanıcısının mesajlarını silme
-    app.add_handler(MessageHandler(filters.User(user_id=5933486341), auto_delete_messages))
 
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
