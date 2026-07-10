@@ -185,7 +185,7 @@ RULES = [
     "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.",
     "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.",
     "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.",
-    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.\",
+    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.",
 ]
 
 async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
