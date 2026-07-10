@@ -70,7 +70,11 @@ async def start_userbot(app: Application):
 async def stop_userbot(app: Application):
     if userbot:
         print("Userbot durduruluyor...")
-        await userbot.stop()
+        try:
+            if userbot.is_connected:
+                await userbot.stop()
+        except Exception as e:
+            print(f"Userbot kapanırken beklenen bir hata oluştu (yoksayılıyor): {e}")
 
 # ==================== YARDIMCI FONKSİYONLAR ====================
 def get_user_mention(user):
@@ -143,11 +147,11 @@ RULES = [
     "📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebi dir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.",
     "📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.",
     "📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.",
-    "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.",
+    "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebi dir.",
     "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.",
     "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.",
     "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.",
-    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebi dir.",
+    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.",
 ]
 
 async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
@@ -201,7 +205,7 @@ async def filtresil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if kelime in data:
         del data[kelime]
         save_json(FILTRE_FILE, data)
-        await update.message.reply_text(f"✅ '{kelime}' filtresi silindi.")
+        await update.message.reply_text(f"✅ '{kelime}' filtresi başarıyla silindi.")
     else:
         await update.message.reply_text(f"❌ '{kelime}' kelimesine ait filtre bulunamadı.")
 
@@ -312,7 +316,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if len(context.args) < 2 or not userbot:
-        await update.message.reply_text("Kullanım: /kontrolet @tayyip_reis_53 @ozgur_ozel_xd")
+        await update.message.reply_text("Kullanım: /kontrolet @kisi1 @kisi2")
         return
 
     try:
@@ -336,7 +340,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Liste güncellendi. {get_user_mention(u1)} ↔ {get_user_mention(u2)} artık birbirleriyle muhatap olamazlar.")
         await log_to_admin(context, f"✅ **Yeni İletişim Yasağı (Yönetici komutu ile):**\n{get_user_mention(u1)} ↔ {get_user_mention(u2)}")
     except Exception as e:
-        await update.message.reply_text("Kullanıcılar bulunamadı")
+        await update.message.reply_text("Kullanıcılar bulunamadı. Lütfen geçerli kullanıcı adları veya ID'ler girin.")
 
 async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_kontrol_listesi()
@@ -354,13 +358,13 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if not context.args:
-        await update.message.reply_text("Kullanım: /kontrolsil 2")
+        await update.message.reply_text("Kullanım: /kontrolsil <Pair ID>")
         return
         
     try:
         pair_id = int(context.args[0])
     except ValueError:
-        return await update.message.reply_text("Lütfen geçerli bir ID gir.")
+        return await update.message.reply_text("Lütfen geçerli bir ID girin.")
         
     data = load_kontrol_listesi()
     original_len = len(data["pairs"])
@@ -369,7 +373,7 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(data["pairs"]) < original_len:
         save_json(KONTROL_FILE, data)
         await update.message.reply_text(f"✅ {pair_id} ID'li kural başarıyla silindi.")
-        await log_to_admin(context, f"🗑️ İletişim Yasağı Kaldırıldı: ID {pair_id}")
+        await log_to_admin(context, f"🗑️ **İletişim Yasağı Kaldırıldı:** ID {pair_id}")
     else:
         await update.message.reply_text("Belirtilen ID bulunamadı.")
 
