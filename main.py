@@ -140,19 +140,22 @@ def get_violation_pair(user1_id, user2_id):
             continue
     return None
 
-async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, message_id, violator_id, p1_name, p2_name, reason):
-    """Userbot ile warn atar ve -51'li gruba mesaj ID/link ile loglar."""
+async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, message_id, violator_id, p1_name, p2_name, reason, reply=True):
+    """Userbot ile warn atar. reply=False ise hiçbir mesajı alıntılamadan gruba düz mesaj atar."""
     chat_id_str = str(chat_id)
     link_chat_id = chat_id_str.replace("-100", "")
     msg_link = f"https://t.me/c/{link_chat_id}/{message_id}"
     
     if userbot and userbot.is_connected:
         try:
-            await userbot.send_message(
-                chat_id=int(chat_id),
-                text=f"/warn {violator_id} İletişim İhlali: Karşılıklı muhatap olmama kararına uyulmadı.\nSebep: {reason}",
-                reply_to_message_id=message_id
-            )
+            warn_text = f"/warn {violator_id} İletişim İhlali: Karşılıklı muhatap olmama kararına uyulmadı.\nSebep: {reason}"
+            
+            # reply değişkenine göre mesaj gönderimi tam izole edildi
+            if reply:
+                await userbot.send_message(chat_id=int(chat_id), text=warn_text, reply_to_message_id=message_id)
+            else:
+                await userbot.send_message(chat_id=int(chat_id), text=warn_text)
+                
             log_text = (f"⚠️ <b>İhlal Tespit Edildi ve Warn Atıldı!</b> ✅\n"
                         f"👤 Kişiler: {p1_name} ↔ {p2_name}\n"
                         f"📌 Sebep: {reason}\n"
@@ -659,7 +662,8 @@ async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TY
             sender.id,
             pair["user1"]["name"],
             pair["user2"]["name"],
-            "Yasaklı olduğu mesaja Yanıt (Reply) attı."
+            "Yasaklı olduğu mesaja Yanıt (Reply) attı.",
+            reply=True
         )
 
 async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -675,6 +679,16 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_id = reaction.message_id
     author_id = RECENT_MESSAGE_AUTHORS.get(msg_id)
     
+    # Userbot cache kurtarması (Bot kapanıp açıldığında eski mesajları görebilsin diye)
+    if not author_id and userbot and userbot.is_connected:
+        try:
+            m = await userbot.get_messages(reaction.chat.id, msg_id)
+            if m and m.from_user:
+                author_id = m.from_user.id
+                RECENT_MESSAGE_AUTHORS[msg_id] = author_id
+        except Exception:
+            pass
+
     if not author_id or actor_id == author_id:
         return
     
@@ -687,7 +701,8 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             actor_id,
             pair["user1"]["name"],
             pair["user2"]["name"],
-            "Yasaklı olduğu mesaja Tepki bıraktı. Bastım uyarıyı."
+            "Yasaklı olduğu mesaja Tepki bıraktı. Bastım uyarıyı.",
+            reply=False # Emoji atıldığında hiçbir mesajı alıntılamadan warn atar
         )
 
 # ==================== YENİ: MENTION (ETİKET) İHLAL KONTROLÜ ====================
@@ -721,18 +736,21 @@ async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TY
     if not forbidden_ids:
         return
     
-    # Mesajdaki mention/text_mention entity'lerini topla
-    entities = (msg.entities or []) + (msg.caption_entities or [])
-    text_content = msg.text or msg.caption or ""
+    # UTF-16 sorununu atlatmak için Telegram'ın parse_entities metodunu kullanıyoruz
+    mentions_dict = {}
+    if msg.text:
+        mentions_dict = msg.parse_entities(["mention", "text_mention"])
+    if msg.caption:
+        mentions_dict.update(msg.parse_caption_entities(["mention", "text_mention"]))
+        
     mentioned_ids = set()
     
-    for ent in entities:
+    for ent, text in mentions_dict.items():
         if ent.type == "text_mention" and getattr(ent, "user", None):
             mentioned_ids.add(ent.user.id)
         elif ent.type == "mention":
-            # @username → userbot ile ID'ye çevir (kullanıcı adı olanlar için)
             try:
-                uname = text_content[ent.offset:ent.offset + ent.length].lstrip("@")
+                uname = text.lstrip("@")
                 if uname and userbot and userbot.is_connected:
                     u = await userbot.get_users(uname)
                     if u and u.id:
@@ -752,7 +770,8 @@ async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TY
                     sender_id,
                     pair["user1"]["name"],
                     pair["user2"]["name"],
-                    "Yasaklı olduğu kişiyi mesajında etiketledi. Bastım uyarıyı."
+                    "Yasaklı olduğu kişiyi mesajında etiketledi. Bastım uyarıyı.",
+                    reply=True
                 )
                 return  # Bir kere uyar yeter
 
@@ -1148,7 +1167,9 @@ def main():
     
     # İletişim İhlali Kontrolleri (Reply + Mention + Reaction)
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol), group=1)
-    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, kontrol_mention_check), group=1)
+    
+    # MENTION KONTROLÜ GROUP 4'E ALINDI. Böylece reply gibi diğer filtreler onu engellemeden mutlaka çalışacak.
+    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, kontrol_mention_check), group=4)
     app.add_handler(MessageReactionHandler(kontrol_reaction))
     
     # Muhatap Olma Anketi Tetikleyici
