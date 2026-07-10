@@ -42,38 +42,27 @@ DUYURU_GROUP_ID = "-1003297262036"
 
 # Kurallar (Rastgele gönderim için)
 RULES = [
-    """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.
-“İnsanın mahremiyeti, özgürlüğünün temelidir.” — John Stuart Mill""",
+    """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.""",
 
-    """📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.
-“Kaba söz, zayıf düşüncenin sesidir.” — Arthur Schopenhauer""",
+    """📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.""",
 
-    """📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.
-“Sessizlik, tartışmayı bitirmenin en zarif yoludur.” — Friedrich Nietzsche""",
+    """📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.""",
 
-    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.
-"Yabancıya karşı saygı, kişinin kendi evine duyduğu saygının bir aynasıdır." — Stefan Zweig""",
+    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.""",
 
-    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.
-“Sessizlik kötülüğün en sadık müttefikidir” — Paulo Freire""",
+    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.""",
 
-    """📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.
-“İftira, ahlaksızlığın en sinsi biçimidir.” — Jean-Jacques Rousseau""",
+    """📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.""",
 
-    """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.
-“Şiddeti savunan, aklı terk etmiştir.” — Albert Camus""",
+    """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.""",
 
-    """📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.
-“İnsanı bozan şey özgürlük değil, ölçüsüzlüktür.” — Montesquieu""",
+    """📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.""",
 
-    """📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.
-“Zevk, tekrarlandıkça değil, tazeyken değerlidir; geciken tat damakta kalmaz.” — Montaigne""",
+    """📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.""",
 
-    """📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.
-“Misafirlik davetle olur.” — Türk atasözü""",
+    """📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.""",
 
-    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.
-“Her topluluk, saygı ve sınır bilinciyle ayakta kalır.” — Alexis de Tocqueville""",
+    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.""",
 ]
 
 RULES_SENT_FILE = "rules_sent.json"
