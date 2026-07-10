@@ -6,14 +6,12 @@ import random
 import asyncio
 from collections import OrderedDict
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Poll
+from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, ConversationHandler, MessageHandler, filters,
     PollAnswerHandler, MessageReactionHandler
 )
-from google import genai
-from google.genai import types
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -23,31 +21,30 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ALLOWED_GROUP_ID = os.getenv("ALLOWED_GROUP_ID")
 
-# Userbot ayarları
-USERBOT_API_ID = int(os.getenv("USERBOT_API_ID", 0))
+USERBOT_API_ID = os.getenv("USERBOT_API_ID")
 USERBOT_API_HASH = os.getenv("USERBOT_API_HASH")
 USERBOT_SESSION_STRING = os.getenv("USERBOT_SESSION_STRING")
 
 if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
     raise ValueError("TELEGRAM_TOKEN, GEMINI_API_KEY ve ALLOWED_GROUP_ID zorunlu!")
 
-# Userbot client
+# Userbot client (sadece geçerli session varsa oluştur)
 userbot_client = None
 if USERBOT_API_ID and USERBOT_API_HASH and USERBOT_SESSION_STRING:
-    userbot_client = TelegramClient(
-        StringSession(USERBOT_SESSION_STRING),
-        USERBOT_API_ID,
-        USERBOT_API_HASH
-    )
-
-IMAGE_URL_1 = "https://i.ibb.co/S4yWQrHg/MG-0345.jpg"
-IMAGE_URL_2 = "https://i.ibb.co/Y748qgsP/MG-0346.jpg"
-RULE_IMAGE_URL = "https://i.ibb.co/r2s2dYhb/MG-0987.png"
+    try:
+        userbot_client = TelegramClient(
+            StringSession(USERBOT_SESSION_STRING),
+            int(USERBOT_API_ID),
+            USERBOT_API_HASH
+        )
+        print("Userbot client oluşturuldu.")
+    except Exception as e:
+        print(f"Userbot oluşturulamadı (session hatası): {e}")
+        userbot_client = None
 
 ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780", "8150494686", "8242824985"]
 ALLOWED_KONTROL_USERS = ALLOWED_DUYURU_USERS
-
-KONTROL_BILDIRIM_GROUP_ID = -5199864315   # <-- YENİ GRUP ID
+KONTROL_BILDIRIM_GROUP_ID = -5199864315
 
 RULES = [
     "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.",
@@ -69,9 +66,7 @@ KONTROL_FILE = "kontrol_listesi.json"
 RECENT_MESSAGE_AUTHORS = OrderedDict()
 USERNAME_TO_ID_CACHE = {}
 MAX_CACHE_SIZE = 1500
-
-# Anket takibi (sadece anket sahibi cevabı geçerli olsun diye)
-PENDING_MUHATAP_POLL = {}   # poll_id -> {"requester_id": int, "target_user": dict}
+PENDING_MUHATAP_POLL = {}
 
 def update_message_cache(message):
     if message and message.from_user:
@@ -143,18 +138,17 @@ def save_kontrol_listesi(data):
     except Exception as e:
         print(f"Kontrol listesi kaydedilemedi: {e}")
 
-# ==================== USERBOT İLE WARN ATMA ====================
+# ==================== USERBOT WARN ====================
 async def send_warn_via_userbot(target_mention: str, reason: str):
-    """Userbot üzerinden /warn komutu atar"""
     if not userbot_client:
-        print("Userbot client başlatılamadı!")
+        print("Userbot aktif değil, warn gönderilemedi.")
         return False
     try:
         if not userbot_client.is_connected():
             await userbot_client.connect()
-        
         warn_command = f"/warn {target_mention} {reason}"
         await userbot_client.send_message(int(ALLOWED_GROUP_ID), warn_command)
+        print(f"Userbot ile warn atıldı: {warn_command}")
         return True
     except Exception as e:
         print(f"Userbot warn hatası: {e}")
@@ -163,130 +157,178 @@ async def send_warn_via_userbot(target_mention: str, reason: str):
 # ==================== KONTROL SİSTEMİ ====================
 
 async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (önceki kontrolet fonksiyonu aynen kalabilir, kısaltmak için buraya koymuyorum)
-    # İstersen önceki mesajımdaki kontrolet fonksiyonunu buraya yapıştır
-    pass
-
-# ==================== YENİ: ALINTI İLE MUHATAP OLMA ANKETİ ====================
-
-async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Birisi mesajı alıntılayarak 'benimle muhatap olma' yazarsa anket oluşturur"""
-    if str(update.message.chat.id) != ALLOWED_GROUP_ID:
+    chat_type = update.message.chat.type
+    if chat_type not in ["private", "group", "supergroup"]:
         return
-    if not update.message.reply_to_message:
+    if chat_type != "private" and str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
 
-    text = (update.message.text or "").lower().strip()
-    if "benimle muhatap olma" not in text and "muhatap olma" not in text:
+    text = update.message.text or ""
+    mentioned = []
+
+    for entity in (update.message.entities or []):
+        if entity.type == "text_mention":
+            u = entity.user
+            mentioned.append({
+                "id": u.id,
+                "name": u.first_name or u.username or str(u.id),
+                "username": u.username
+            })
+        elif entity.type == "mention":
+            username_part = text[entity.offset:entity.offset + entity.length].lstrip("@")
+            username_lower = username_part.lower()
+            found_id = USERNAME_TO_ID_CACHE.get(username_lower)
+            mentioned.append({
+                "id": found_id,
+                "name": username_part,
+                "username": username_part
+            })
+
+    if len(mentioned) < 2:
+        await update.message.reply_text("İki üyeyi etiketle işte. Örnek: /kontrolet @Tayyip @Özgür")
         return
 
-    replied_user = update.message.reply_to_message.from_user
-    requester = update.message.from_user
+    u1, u2 = mentioned[0], mentioned[1]
+    data = load_kontrol_listesi()
+    new_pair = {"pair_id": data["next_pair_id"], "user1": u1, "user2": u2}
+    data["pairs"].append(new_pair)
+    data["next_pair_id"] += 1
+    save_kontrol_listesi(data)
 
-    if not replied_user or not requester:
+    await update.message.reply_text(f"✅ İletişim yasağı eklendi! #{new_pair['pair_id']}")
+
+
+async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
-
-    # Anket oluştur
-    question = (
-        f"Bu kişinin ({replied_user.first_name or replied_user.username}) seninle herhangi bir iletişime geçmemesini istiyorsun. "
-        "Senin de onunla aynı şekilde iletişim kurmaman, laf atmaman gerekiyor. Onaylıyor musun?"
-    )
-
-    try:
-        poll_message = await context.bot.send_poll(
-            chat_id=update.message.chat_id,
-            question=question,
-            options=["Evet", "Hayır"],
-            is_anonymous=False,
-            reply_to_message_id=update.message.reply_to_message.message_id
-        )
-
-        # Anketi takip et (sadece anket sahibi cevabı geçerli olsun)
-        PENDING_MUHATAP_POLL[poll_message.poll.id] = {
-            "requester_id": requester.id,
-            "target_user": {
-                "id": replied_user.id,
-                "name": replied_user.first_name or replied_user.username or str(replied_user.id),
-                "username": replied_user.username
-            }
-        }
-
-    except Exception as e:
-        print(f"Anket oluşturma hatası: {e}")
-
-
-async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sadece anketi oluşturan kişinin cevabını değerlendirir"""
-    poll_answer = update.poll_answer
-    if not poll_answer:
+    data = load_kontrol_listesi()
+    if not data.get("pairs"):
+        await update.message.reply_text("İletişim kontrol listesi boş.")
         return
+    lines = [f"{p['pair_id']}- {p['user1']['name']} ve {p['user2']['name']}" for p in data["pairs"]]
+    await update.message.reply_text("📋 Muhatap olmayanlar Listesi:\n\n" + "\n".join(lines), parse_mode="Markdown")
 
-    poll_id = poll_answer.poll_id
-    if poll_id not in PENDING_MUHATAP_POLL:
+
+async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Kullanım: /kontrolsil 2")
+        return
+    pid = int(context.args[0])
+    data = load_kontrol_listesi()
+    data["pairs"] = [p for p in data["pairs"] if p["pair_id"] != pid]
+    save_kontrol_listesi(data)
+    await update.message.reply_text(f"✅ #{pid} silindi.")
 
-    data = PENDING_MUHATAP_POLL[poll_id]
-    if poll_answer.user.id != data["requester_id"]:
-        return  # Başkası tıkladıysa dikkate alma
 
-    answer = poll_answer.option_ids[0]  # 0 = Evet, 1 = Hayır
+def get_user_mention(user):
+    return f"@{user.username}" if user.username else (user.first_name or "Kullanıcı")
 
-    target = data["target_user"]
-    requester_id = data["requester_id"]
-
-    if answer == 0:  # Evet
-        # Otomatik olarak iletişim yasağı ekle
-        pair_data = load_kontrol_listesi()
-        new_pair = {
-            "pair_id": pair_data["next_pair_id"],
-            "user1": {"id": requester_id, "name": "İstek Sahibi", "username": None},
-            "user2": target
-        }
-        pair_data["pairs"].append(new_pair)
-        pair_data["next_pair_id"] += 1
-        save_kontrol_listesi(pair_data)
-
-        await context.bot.send_message(
-            chat_id=ALLOWED_GROUP_ID,
-            text=f"✅ İletişim yasağı eklendi! #{new_pair['pair_id']}"
-        )
-
-    # Anketi temizle
-    del PENDING_MUHATAP_POLL[poll_id]
-
-# ==================== İHLAL KONTROL (Userbot ile warn) ====================
 
 async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (önceki kod)
-    # İhlal olduğunda:
-    # await send_warn_via_userbot(mention, "İletişim yasağı ihlali (Reply)")
-    pass
+    if str(update.message.chat.id) != ALLOWED_GROUP_ID or not update.message.reply_to_message:
+        return
 
-# Benzer şekilde kontrol_reaction da güncellenecek
+    sender = update.message.from_user
+    replied = update.message.reply_to_message.from_user
+    if not sender or not replied:
+        return
+
+    data = load_kontrol_listesi()
+
+    for pair in data.get("pairs", []):
+        u1_id = pair["user1"].get("id")
+        u2_id = pair["user2"].get("id")
+
+        if u1_id is None or u2_id is None:
+            continue
+
+        if (sender.id == u1_id and replied.id == u2_id) or (sender.id == u2_id and replied.id == u1_id):
+            mention = get_user_mention(sender)
+            reason = "İletişim yasağı ihlali (Reply)"
+            
+            # Userbot ile warn at
+            await send_warn_via_userbot(mention, reason)
+            
+            # Bildirim grubuna bilgi
+            await send_kontrol_bildirim(context, "Reply", f"/warn {mention} {reason}", update.message.chat_id)
+            break
+
+
+async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reaction = update.message_reaction
+    if not reaction or str(reaction.chat.id) != ALLOWED_GROUP_ID or not reaction.new_reaction:
+        return
+
+    reactor = reaction.user
+    if not reactor:
+        return
+
+    original_author_id = RECENT_MESSAGE_AUTHORS.get(reaction.message_id)
+    if not original_author_id:
+        return
+
+    data = load_kontrol_listesi()
+
+    for pair in data.get("pairs", []):
+        u1_id = pair["user1"].get("id")
+        u2_id = pair["user2"].get("id")
+
+        if u1_id is None or u2_id is None:
+            continue
+
+        if (reactor.id == u1_id and original_author_id == u2_id) or (reactor.id == u2_id and original_author_id == u1_id):
+            mention = get_user_mention(reactor)
+            reason = "İletişim yasağı ihlali (Emoji Tepki)"
+            
+            await send_warn_via_userbot(mention, reason)
+            await send_kontrol_bildirim(context, "Emoji Tepki", f"/warn {mention} {reason}", reaction.chat.id)
+            break
+
+
+async def send_kontrol_bildirim(context, ihlal_tipi, warn_text, chat_id):
+    try:
+        await context.bot.send_message(
+            chat_id=KONTROL_BILDIRIM_GROUP_ID,
+            text=f"🚨 İletişim Yasağı İhlali ({ihlal_tipi})\n\n{warn_text}\n\nGrup: {chat_id}"
+        )
+    except Exception as e:
+        print(f"Bildirim hatası: {e}")
 
 # ==================== ANA FONKSİYON ====================
+async def start_userbot():
+    if userbot_client:
+        try:
+            await userbot_client.start()
+            print("Userbot başarıyla başlatıldı.")
+        except Exception as e:
+            print(f"Userbot başlatılamadı: {e}")
+
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # Userbot'u başlat
     if userbot_client:
-        asyncio.get_event_loop().create_task(userbot_client.start())
+        asyncio.create_task(start_userbot())
 
     # Cache
-    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author), group=-2)
+    app.add_handler(
+        MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author),
+        group=-2
+    )
 
-    # Yeni anket sistemi
-    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, muhatap_olma_anket))
-    app.add_handler(PollAnswerHandler(muhatap_poll_answer))
-
-    # Kontrol komutları
+    # Kontrol sistemi
     app.add_handler(CommandHandler("kontrolet", kontrolet))
     app.add_handler(CommandHandler("kontrolliste", kontrolliste))
     app.add_handler(CommandHandler("kontrolsil", kontrolsil))
+    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol))
+    app.add_handler(MessageReactionHandler(kontrol_reaction))
 
-    # Diğer handler'lar...
-    app.add_handler(CommandHandler("start", send_guide))
-    # ... (diğer komutlar)
+    # Diğer komutlar
+    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("Bot çalışıyor.")))
 
     if app.job_queue:
         app.job_queue.run_repeating(post_random_rule, interval=155 * 60, first=60, name="random_rule_poster")
