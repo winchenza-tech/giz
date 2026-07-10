@@ -5,6 +5,7 @@ import pytz
 import asyncio
 import json
 import random
+import io
 from collections import OrderedDict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -31,6 +32,7 @@ IMAGE_URL_1 = "https://i.ibb.co/S4yWQrHg/MG-0345.jpg"
 IMAGE_URL_2 = "https://i.ibb.co/Y748qgsP/MG-0346.jpg"
 SORU_IMAGE_URL = "https://i.ibb.co/5Xcrbv87/MG-0398.jpg"
 RULE_IMAGE_URL = "https://i.ibb.co/r2s2dYhb/MG-0987.png"
+IMAGE_URL_KIZLARBAKINBI = "https://i.ibb.co/V0MdBHPy/MG-1001.jpg"
 
 GEMINI_MODEL = "gemini-2.5-flash"
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -143,7 +145,7 @@ async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, mess
     chat_id_str = str(chat_id)
     link_chat_id = chat_id_str.replace("-100", "")
     msg_link = f"https://t.me/c/{link_chat_id}/{message_id}"
-    
+   
     if userbot and userbot.is_connected:
         try:
             await userbot.send_message(
@@ -192,22 +194,22 @@ async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now(tz)
     if not (now.hour >= 8 or now.hour < 1):
         return
-   
+  
     today_str = now.strftime("%Y-%m-%d")
     data = load_json(RULES_SENT_FILE, {"date": today_str, "sent": []})
-   
+  
     if data.get("date") != today_str:
         data = {"date": today_str, "sent": []}
-       
+      
     sent = set(data.get("sent", []))
     available = [i for i in range(len(RULES)) if i not in sent]
-   
+  
     if not available:
         return
-       
+      
     idx = random.choice(available)
     await context.bot.send_photo(chat_id=ALLOWED_GROUP_ID, photo=RULE_IMAGE_URL, caption=RULES[idx])
-   
+  
     sent.add(idx)
     data["sent"] = list(sent)
     save_json(RULES_SENT_FILE, data)
@@ -218,20 +220,25 @@ async def filtreekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text("Kullanım: /filtreekle kelime @kisi1 @kisi2 ...")
+        await update.message.reply_text("Kullanım: /filtreekle kelime @tayyip @ozgur ... ")
         return
-    
+   
     kelime = args[0].lower()
     user_args = args[1:]
-    
+   
     if not userbot or not userbot.is_connected:
-        await update.message.reply_text("❌ Userbot bağlı değil. ID çözümlemesi için userbot gerekli.")
+        await update.message.reply_text("❌ Userbot bağlı değil. @eskidenyesil .")
         return
-    
+   
     members = []
     for u_arg in user_args:
         try:
-            u = await userbot.get_users(u_arg)
+            # Kullanıcı adı olmayanlar için sayısal ID desteği eklendi
+            if str(u_arg).lstrip("-").isdigit():
+                u = await userbot.get_users(int(u_arg))
+            else:
+                u = await userbot.get_users(u_arg)
+            
             display = u.first_name or ""
             if u.last_name:
                 display += " " + u.last_name
@@ -239,16 +246,16 @@ async def filtreekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 display += f" (@{u.username})"
             members.append({"id": u.id, "display_name": display.strip() or str(u.id)})
         except Exception as e:
-            await update.message.reply_text(f"❌ '{u_arg}' kullanıcısı çözümlenemedi: {e}")
+            await update.message.reply_text(f"❌ '{u_arg}' id alamadım :( {e}")
             return
-    
+   
     data = load_json(FILTRE_FILE, {})
     data[kelime] = members
     save_json(FILTRE_FILE, data)
-    
+   
     names_str = ", ".join([m["display_name"] for m in members])
     await update.message.reply_text(
-        f"✅ Filtre başarıyla eklendi (ID tabanlı).\n"
+        f" Filtre eklendi.\n"
         f"'{kelime}' yazıldığında etiketlenecekler:\n{names_str}"
     )
 
@@ -256,87 +263,86 @@ async def filtresil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
     if not context.args:
-        await update.message.reply_text("Kullanım: /filtresil kelime [@kisi veya all/hepsi]")
+        await update.message.reply_text("Kullanım: /filtresil kelime [@kisi]")
         return
-    
+   
     kelime = context.args[0].lower()
     data = load_json(FILTRE_FILE, {})
-    
+   
     if kelime not in data:
-        await update.message.reply_text(f"❌ '{kelime}' kelimesine ait filtre bulunamadı.")
+        await update.message.reply_text(f"❌ '{kelime}' kelimesine ait filtre yok ki ne yazdığına dikkat et.")
         return
-    
+   
     # Sadece kelime verildiyse → tüm filtreyi sil
     if len(context.args) == 1:
         del data[kelime]
         save_json(FILTRE_FILE, data)
-        await update.message.reply_text(f"✅ '{kelime}' filtresi tamamen silindi.")
+        await update.message.reply_text(f"✅ '{kelime}' filtresi tamamen silindi. Canıma değsin")
         return
-    
+   
     # İkinci argüman var → tek kullanıcı veya toplu silme
     target = context.args[1].lower()
-    
+   
     if target in ["all", "hepsi", "temizle"]:
         del data[kelime]
         save_json(FILTRE_FILE, data)
-        await update.message.reply_text(f"✅ '{kelime}' filtresi tamamen temizlendi.")
+        await update.message.reply_text(f"✅ '{kelime}' filtresi  temizlendi.")
         return
-    
+   
     # Tek kullanıcı kaldırma (ID tabanlı)
     if not isinstance(data[kelime], list):
-        await update.message.reply_text("⚠️ Bu filtre eski formatta. Önce /filtresil ile tamamen silip yeniden ekleyin.")
+        await update.message.reply_text("Gizem sen misin? Bu filtre eski formatta. Önce /filtresil ile tamamen silip yeniden ekle bakalım.")
         return
-    
+   
     if not userbot or not userbot.is_connected:
         await update.message.reply_text("❌ Userbot bağlı değil.")
         return
-    
+   
     try:
         target_user = await userbot.get_users(context.args[1])
         target_id = int(target_user.id)
     except Exception:
         await update.message.reply_text(f"❌ '{context.args[1]}' kullanıcısı bulunamadı.")
         return
-    
+   
     original_len = len(data[kelime])
     data[kelime] = [item for item in data[kelime] if int(item.get("id", 0)) != target_id]
-    
+   
     if len(data[kelime]) < original_len:
         if not data[kelime]:
             del data[kelime]
         save_json(FILTRE_FILE, data)
-        await update.message.reply_text(f"✅ '{context.args[1]}' kullanıcısı '{kelime}' filtresinden kaldırıldı.")
+        await update.message.reply_text(f"✅ '{context.args[1]}' '{kelime}' filtresinden kaldırıldı.")
     else:
-        await update.message.reply_text("Kullanıcı bu filtrede bulunamadı.")
+        await update.message.reply_text("Kullanıcı bu filtrede yok.")
 
 async def filtreliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_json(FILTRE_FILE, {})
     if not data:
-        await update.message.reply_text("Aktif filtre bulunmamaktadır.")
+        await update.message.reply_text("Aktif filtre yok ki.")
         return
-    
-    text = "📝 **Aktif Filtreler (Numaralı Liste):**\n\n"
+   
+    text = "📝 Aktif Filtreler (Numaralı Liste):\n\n"
     for k, v in data.items():
         if isinstance(v, list):
-            text += f"🔹 **{k}**\n"
+            text += f"🔹 {k}\n"
             for idx, m in enumerate(v, 1):
-                text += f"   {idx}. {m.get('display_name', 'İsimsiz')} (ID: {m.get('id')})\n"
+                text += f" {idx}. {m.get('display_name', 'İsimsiz')} (ID: {m.get('id')})\n"
             text += "\n"
         else:
             # Eski string formatı (geriye uyumluluk)
-            text += f"🔹 **{k}** → {v}\n\n"
-    
+            text += f"🔹 {k} → {v}\n\n"
+   
     text += "_Kişi silmek için:_ `/filtrekisisil kelime numara`"
     await update.message.reply_text(text, parse_mode="Markdown")
-
 
 async def filtrekisiekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
-    
+   
     kelime = None
     target_user = None
-    
+   
     # Öncelik: Reply varsa replied kullanıcıyı al (kullanıcı adı olmayanlar için en kolay yöntem)
     if update.message.reply_to_message and update.message.reply_to_message.from_user:
         target_user = update.message.reply_to_message.from_user
@@ -347,49 +353,51 @@ async def filtrekisiekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     else:
         if len(context.args) < 2:
-            await update.message.reply_text("Kullanım: /filtrekisiekle kelime @kisi (veya ID)\nVeya bir mesaja reply atıp /filtrekisiekle kelime yazabilirsin.")
+            await update.message.reply_text("Kullanım: /filtrekisiekle kelime @kisi veya bir mesaja reply atıp /filtrekisiekle kelime yazabilirsin.")
             return
         kelime = context.args[0].lower()
-    
+   
     data = load_json(FILTRE_FILE, {})
-    
+   
     if kelime not in data:
-        await update.message.reply_text(f"❌ '{kelime}' diye bir filtre bulunamadı. Önce /filtreekle ile oluşturun.")
+        await update.message.reply_text(f"❌ '{kelime}' diye bir filtre bulunamadı. Önce /filtreekle ile oluştur bakalım.")
         return
-    
+   
     if not isinstance(data[kelime], list):
         await update.message.reply_text("⚠️ Bu filtre eski formatta. Silip yeniden oluşturun.")
         return
-    
+   
     if not userbot or not userbot.is_connected:
-        await update.message.reply_text("❌ Userbot bağlı değil.")
+        await update.message.reply_text("❌ Userbot bağlı değil.Acil zenithara haber ver")
         return
-    
+   
     try:
         if target_user:
             # Reply'den geldi → direkt ID kullan
             u = target_user
         else:
             # Argüman olarak verildi (@username veya numeric ID)
-            u = await userbot.get_users(context.args[1])
-        
+            if str(context.args[1]).lstrip("-").isdigit():
+                u = await userbot.get_users(int(context.args[1]))
+            else:
+                u = await userbot.get_users(context.args[1])
+       
         display = u.first_name or ""
         if u.last_name:
             display += " " + u.last_name
         if u.username:
             display += f" (@{u.username})"
-        
+       
         # Zaten var mı kontrol et
         if any(int(m.get("id", 0)) == u.id for m in data[kelime]):
             await update.message.reply_text("Bu kullanıcı zaten bu filtrede kayıtlı.")
             return
-        
+       
         data[kelime].append({"id": u.id, "display_name": display.strip() or str(u.id)})
         save_json(FILTRE_FILE, data)
         await update.message.reply_text(f"✅ {display.strip()} başarıyla '{kelime}' filtresine eklendi. (ID: {u.id})")
     except Exception as e:
-        await update.message.reply_text(f"❌ Kullanıcı çözümlenemedi: {e}")
-
+        await update.message.reply_text(f"❌ Kullanıcıyı ekleyemedim :( {e}")
 
 async def filtrekisisil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
@@ -397,43 +405,42 @@ async def filtrekisisil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("Kullanım: /filtrekisisil kelime numara\nÖrnek: /filtrekisisil kural 2")
         return
-    
+   
     kelime = context.args[0].lower()
     try:
         num = int(context.args[1])
     except ValueError:
-        await update.message.reply_text("❌ Numara geçerli bir sayı olmalı.")
+        await update.message.reply_text("❌ Numara geçerli bir sayı olmalı daha dikkatli ol allah aşkına.")
         return
-    
+   
     data = load_json(FILTRE_FILE, {})
     if kelime not in data or not isinstance(data[kelime], list):
-        await update.message.reply_text("❌ Filtre bulunamadı veya eski formatta.")
+        await update.message.reply_text("❌ Filtre bulunamadı veya eski formatta pfff.")
         return
-    
+   
     members = data[kelime]
     if num < 1 or num > len(members):
         await update.message.reply_text(f"❌ Geçersiz numara. 1 ile {len(members)} arasında olmalı.")
         return
-    
+   
     removed = members.pop(num - 1)
     if not members:
         del data[kelime]
     else:
         data[kelime] = members
-    
+   
     save_json(FILTRE_FILE, data)
     await update.message.reply_text(f"✅ {removed.get('display_name', 'Kişi')} filtreden kaldırıldı.")
-
 
 async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
     if str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
-    
+   
     text = update.message.text.lower()
     data = load_json(FILTRE_FILE, {})
-    
+   
     for kelime, val in data.items():
         if re.search(r'\b' + re.escape(kelime) + r'\b', text):
             if isinstance(val, list):
@@ -443,8 +450,19 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     uid = member.get("id")
                     dname = member.get("display_name", str(uid))
                     mentions.append(f'<a href="tg://user?id={uid}">{dname}</a>')
-                
+               
                 mention_text = " ".join(mentions)
+                
+                # Özel durum: kızlarbakinbi filtresi için üstte görsel
+                if kelime == "kızlarbakinbi":
+                    try:
+                        await update.message.reply_photo(
+                            photo=IMAGE_URL_KIZLARBAKINBI,
+                            caption="👀 Kızlar bakın bi!"
+                        )
+                    except Exception as e:
+                        print(f"Kızlarbakinbi görseli gönderilemedi: {e}")
+                
                 try:
                     await update.message.reply_text(mention_text, parse_mode="HTML")
                 except Exception:
@@ -464,26 +482,26 @@ async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     if update.message.from_user.is_bot:
         return
-    
+   
     text = update.message.text or update.message.caption or ""
     if text.startswith("/"):
         return
     if not MUHATAP_REGEX.search(text):
         return
-    
+   
     sender = update.message.from_user
     target = update.message.reply_to_message.from_user
-    
+   
     if not sender or not target or sender.id == target.id:
         return
     if get_violation_pair(sender.id, target.id):
         return
-    
+   
     active_polls = context.bot_data.get("active_polls", set())
     pair_key = tuple(sorted([sender.id, target.id]))
     if pair_key in active_polls:
         return
-    
+   
     poll = await context.bot.send_poll(
         chat_id=update.message.chat_id,
         question="Bu kişinin seninle muhatap olmasını istemediğini belirtiyorsun. Aynı şekilde sen de bu kişiye cevap, laf ve hatta emoji dahi atmayacaksın. Kabul ediyor musun?",
@@ -491,7 +509,7 @@ async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE)
         is_anonymous=False,
         reply_to_message_id=update.message.message_id
     )
-    
+   
     active_polls.add(pair_key)
     context.bot_data["active_polls"] = active_polls
     context.bot_data[f"muhatap_poll_{poll.poll.id}"] = {
@@ -507,19 +525,19 @@ async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
     poll_answer = update.poll_answer
     poll_id = poll_answer.poll_id
     poll_data = context.bot_data.get(f"muhatap_poll_{poll_id}")
-    
+   
     if not poll_data:
         return
-    
+   
     if "active_polls" in context.bot_data:
         context.bot_data["active_polls"].discard(poll_data["pair_key"])
-    
+   
     if poll_answer.user.id != poll_data["sender_id"]:
         return
-    
-    if poll_answer.option_ids[0] == 0:  # Evet
+   
+    if poll_answer.option_ids[0] == 0: # Evet
         data = load_kontrol_listesi()
-        
+       
         if not get_violation_pair(poll_data["sender_id"], poll_data["target_id"]):
             new_pair = {
                 "pair_id": data["next_pair_id"],
@@ -529,22 +547,22 @@ async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
             data["pairs"].append(new_pair)
             data["next_pair_id"] += 1
             save_json(KONTROL_FILE, data)
-            
+           
             await context.bot.send_message(
                 chat_id=poll_data["chat_id"],
                 text=f"✅ İletişim yasağı otomatik eklendi!\n{poll_data['sender_name']} ↔ {poll_data['target_name']}\nArtık birbirinize reply veya emoji atamazsınız."
             )
-            await log_to_admin(context, f"✅ <b>Yeni İletişim Yasağı (Anket ile):</b>\n{poll_data['sender_name']} ↔ {poll_data['target_name']}")
-    
+            await log_to_admin(context, f"✅ <b>Yeni İletişim Yasağı, takipteyim. </b>\n{poll_data['sender_name']} ↔ {poll_data['target_name']}")
+   
     del context.bot_data[f"muhatap_poll_{poll_id}"]
 
 async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
-    
+   
     u1 = None
     u2 = None
-    
+   
     # Reply desteği: Bir mesaja reply atılırsa, replied kullanıcı ikinci kişi olur (kullanıcı adı olmayanlar için)
     if update.message.reply_to_message and update.message.reply_to_message.from_user:
         if len(context.args) < 1:
@@ -554,7 +572,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             u1 = await userbot.get_users(context.args[0])
             u2 = update.message.reply_to_message.from_user
         except Exception as e:
-            await update.message.reply_text(f"İlk kullanıcı çözümlenemedi: {e}")
+            await update.message.reply_text(f"İlk kullanıcıyı ekleyemedim: {e}")
             return
     else:
         if len(context.args) < 2 or not userbot:
@@ -564,15 +582,15 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             u1 = await userbot.get_users(context.args[0])
             u2 = await userbot.get_users(context.args[1])
         except Exception as e:
-            await update.message.reply_text(f"Kullanıcılar çözümlenemedi: {e}")
+            await update.message.reply_text(f"Kullanıcıları ekleyemedim @eskidenyesil bir bak bakalım: {e}")
             return
-    
+   
     try:
         data = load_kontrol_listesi()
         if get_violation_pair(u1.id, u2.id):
             await update.message.reply_text("Bu iki kullanıcı zaten listede.")
             return
-        
+       
         new_pair = {
             "pair_id": data["next_pair_id"],
             "user1": {"id": u1.id, "name": get_user_mention(u1)},
@@ -581,7 +599,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["pairs"].append(new_pair)
         data["next_pair_id"] += 1
         save_json(KONTROL_FILE, data)
-        
+       
         await update.message.reply_text(f"✅ Liste güncellendi. {get_user_mention(u1)} ↔ {get_user_mention(u2)} artık birbirleriyle muhatap olamazlar.")
         await log_to_admin(context, f"✅ <b>Yeni İletişim Yasağı (Yönetici komutu ile):</b>\n{get_user_mention(u1)} ↔ {get_user_mention(u2)}")
     except Exception as e:
@@ -592,7 +610,7 @@ async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not data["pairs"]:
         await update.message.reply_text("Kontrol listesi şu an boş.")
         return
-    
+   
     text = "🚫 **Muhatap Olmama Listesi (ID Tabanlı)**\n\n"
     for p in data["pairs"]:
         text += f"ID: {p['pair_id']} | {p['user1']['name']} (ID:{p['user1']['id']}) ↔ {p['user2']['name']} (ID:{p['user2']['id']})\n"
@@ -601,23 +619,23 @@ async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
-    
+   
     if not context.args:
         await update.message.reply_text("Kullanım: /kontrolsil 2")
         return
-    
+   
     try:
         pair_id = int(context.args[0])
     except ValueError:
-        return await update.message.reply_text("Lütfen geçerli bir ID gir.")
-    
+        return await update.message.reply_text(" geçerli bir ID gir.")
+   
     data = load_kontrol_listesi()
     original_len = len(data["pairs"])
     data["pairs"] = [p for p in data["pairs"] if p["pair_id"] != pair_id]
-    
+   
     if len(data["pairs"]) < original_len:
         save_json(KONTROL_FILE, data)
-        await update.message.reply_text(f"✅ {pair_id} ID'li kural başarıyla silindi.")
+        await update.message.reply_text(f"✅ {pair_id} ID'li kural başarıyla silindi.Barıştılar galiba.")
         await log_to_admin(context, f"🗑️ <b>İletişim Yasağı Kaldırıldı:</b> ID {pair_id}")
     else:
         await update.message.reply_text("Belirtilen ID bulunamadı.")
@@ -626,12 +644,12 @@ async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TY
     msg = update.message
     if not msg or not msg.reply_to_message:
         return
-    
+   
     sender = msg.from_user
     target = msg.reply_to_message.from_user
     if not sender or not target:
         return
-    
+   
     pair = get_violation_pair(sender.id, target.id)
     if pair:
         await trigger_userbot_warn(
@@ -647,18 +665,18 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reaction = update.message_reaction
     if not reaction:
         return
-    
+   
     # DÜZELTME: reaction.user (doğru attribute)
     actor_id = reaction.user.id if reaction.user else None
     if not actor_id:
         return
-    
+   
     msg_id = reaction.message_id
     author_id = RECENT_MESSAGE_AUTHORS.get(msg_id)
-    
+   
     if not author_id or actor_id == author_id:
         return
-    
+   
     pair = get_violation_pair(actor_id, author_id)
     if pair:
         await trigger_userbot_warn(
@@ -667,69 +685,263 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg_id,
             pair["user1"]["name"],
             pair["user2"]["name"],
-            "Yasaklı olduğu mesaja Tepki (Emoji) bıraktı."
+            "Yasaklı olduğu mesaja Tepki bıraktı. Bastım uyarıyı."
         )
+
+# ==================== YENİ: MENTION (ETİKET) İHLAL KONTROLÜ ====================
+async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reply veya emoji olmayan, ama mesaj içinde @etiket yapıldığında ihlali yakalar."""
+    msg = update.message
+    if not msg or (not msg.text and not msg.caption):
+        return
+    if str(msg.chat.id) != ALLOWED_GROUP_ID:
+        return
+   
+    sender = msg.from_user
+    if not sender:
+        return
+    sender_id = sender.id
+   
+    # Bu kullanıcının yasaklı olduğu kişiler var mı?
+    data = load_kontrol_listesi()
+    forbidden_ids = set()
+    for pair in data.get("pairs", []):
+        try:
+            p1 = int(pair["user1"]["id"])
+            p2 = int(pair["user2"]["id"])
+            if p1 == sender_id:
+                forbidden_ids.add(p2)
+            elif p2 == sender_id:
+                forbidden_ids.add(p1)
+        except (KeyError, ValueError, TypeError):
+            continue
+   
+    if not forbidden_ids:
+        return
+   
+    # Mesajdaki mention/text_mention entity'lerini topla
+    entities = (msg.entities or []) + (msg.caption_entities or [])
+    text_content = msg.text or msg.caption or ""
+    mentioned_ids = set()
+   
+    for ent in entities:
+        if ent.type == "text_mention" and getattr(ent, "user", None):
+            mentioned_ids.add(ent.user.id)
+        elif ent.type == "mention":
+            # @username → userbot ile ID'ye çevir (kullanıcı adı olanlar için)
+            try:
+                uname = text_content[ent.offset:ent.offset + ent.length].lstrip("@")
+                if uname and userbot and userbot.is_connected:
+                    u = await userbot.get_users(uname)
+                    if u and u.id:
+                        mentioned_ids.add(u.id)
+            except Exception:
+                pass  # sessizce devam et
+   
+    # İhlal var mı kontrol et
+    for fid in forbidden_ids:
+        if fid in mentioned_ids:
+            pair = get_violation_pair(sender_id, fid)
+            if pair:
+                await trigger_userbot_warn(
+                    context,
+                    msg.chat_id,
+                    msg.message_id,
+                    pair["user1"]["name"],
+                    pair["user2"]["name"],
+                    "Yasaklı olduğu kişiyi mesajında etiketledi. Bastım uyarıyı."
+                )
+                return  # Bir kere uyar yeter
+
+# ==================== YEDEK / YÜKLE (KONTROL + FİLTRE) - BULUT / GÜNCELLEME SONRASI KURTarma ====================
+async def kontrolyedekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    data = load_kontrol_listesi()
+    json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    bio = io.BytesIO(json_bytes)
+    bio.name = "kontrol_listesi_yedek.json"
+    await update.message.reply_document(
+        document=bio,
+        filename="kontrol_listesi_yedek.json",
+        caption="✅ Kontrol listesi yedeği alındı.\nGüncellemeden sonra bu dosyayı reply + /kontrolyukle ile geri yükleyebilirsin. Yapamam deme yaparsın Gizem."
+    )
+
+async def kontrolyukle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Kullanım: Yedek JSON dosyasına veya ```json bloğuna reply atıp /kontrolyukle yaz.")
+        return
+   
+    replied = update.message.reply_to_message
+    json_text = None
+   
+    if replied.document:
+        try:
+            file = await context.bot.get_file(replied.document.file_id)
+            content = await file.download_as_bytearray()
+            json_text = content.decode("utf-8")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Dosya indirilemedi: {e}")
+            return
+    elif replied.text:
+        txt = replied.text.strip()
+        if "```json" in txt:
+            parts = txt.split("```json", 1)
+            if len(parts) > 1:
+                json_text = parts[1].split("```", 1)[0].strip()
+        elif "```" in txt:
+            parts = txt.split("```", 1)
+            if len(parts) > 1:
+                json_text = parts[1].split("```", 1)[0].strip()
+        else:
+            json_text = txt
+    else:
+        await update.message.reply_text("Reply edilen mesajda kayıt bloğu bulunamadım :(")
+        return
+   
+    if not json_text:
+        await update.message.reply_text("JSON içeriği çıkarılamadı.")
+        return
+   
+    try:
+        new_data = json.loads(json_text)
+        if not isinstance(new_data, dict) or "pairs" not in new_data or "next_pair_id" not in new_data:
+            await update.message.reply_text("❌ Geçersiz kontrol listesi formatı.")
+            return
+        save_json(KONTROL_FILE, new_data)
+        await update.message.reply_text(f"✅ Kontrol listesi başarıyla yüklendi! Aferin ({len(new_data.get('pairs', []))} çift)")
+        await log_to_admin(context, "📥 <b>Kontrol listesi manuel yedekten geri yüklendi. Aferin. </b>")
+    except json.JSONDecodeError as e:
+        await update.message.reply_text(f"❌ JSON hatası: {e}")
+    except Exception as e:
+        await update.message.reply_text(f"Hata oluştu: {e}")
+
+async def filtreyedekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    data = load_json(FILTRE_FILE, {})
+    json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    bio = io.BytesIO(json_bytes)
+    bio.name = "filtreler_yedek.json"
+    await update.message.reply_document(
+        document=bio,
+        filename="filtreler_yedek.json",
+        caption="✅ Filtreler yedeği alındı.\nGüncellemeden sonra bu dosyayı reply + /filtreyukle ile geri yükleyebilirsin. Yapamam deme yapabilirsin."
+    )
+
+async def filtreyukle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Kullanım: Kayıt bloğuna reply atıp /filtreyukle yaz.")
+        return
+   
+    replied = update.message.reply_to_message
+    json_text = None
+   
+    if replied.document:
+        try:
+            file = await context.bot.get_file(replied.document.file_id)
+            content = await file.download_as_bytearray()
+            json_text = content.decode("utf-8")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Dosya indirilemedi: {e}")
+            return
+    elif replied.text:
+        txt = replied.text.strip()
+        if "```json" in txt:
+            parts = txt.split("```json", 1)
+            if len(parts) > 1:
+                json_text = parts[1].split("```", 1)[0].strip()
+        elif "```" in txt:
+            parts = txt.split("```", 1)
+            if len(parts) > 1:
+                json_text = parts[1].split("```", 1)[0].strip()
+        else:
+            json_text = txt
+    else:
+        await update.message.reply_text("Reply edilen mesajda JSON bulunamadı.")
+        return
+   
+    if not json_text:
+        await update.message.reply_text("JSON içeriği çıkarılamadı.Zenithara danış")
+        return
+   
+    try:
+        new_data = json.loads(json_text)
+        if not isinstance(new_data, dict):
+            await update.message.reply_text("❌ Filtre verisi dict (sözlük) formatında olmalı.")
+            return
+        save_json(FILTRE_FILE, new_data)
+        await update.message.reply_text(f"✅ Filtreler başarıyla yüklendi! Good girl. ({len(new_data)} filtre)")
+        await log_to_admin(context, "📥 <b>Filtre listesi manuel yedekten geri yüklendi.</b>")
+    except json.JSONDecodeError as e:
+        await update.message.reply_text(f"❌ JSON hatası: {e}")
+    except Exception as e:
+        await update.message.reply_text(f"Hata oluştu: {e}")
 
 # ==================== /SORU (TAM ORİJİNAL) ====================
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == "private" or str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
-    
+   
     text = update.message.text or update.message.caption or ""
     question_text = re.sub(r'(?i)^/soru\s*', '', text).strip()
-    
+   
     if not question_text and update.message.reply_to_message:
         question_text = update.message.reply_to_message.text or update.message.reply_to_message.caption or ""
-    
+   
     photo_obj = None
     if update.message.photo:
         photo_obj = update.message.photo[-1]
     elif update.message.reply_to_message and update.message.reply_to_message.photo:
         photo_obj = update.message.reply_to_message.photo[-1]
-    
+   
     image_data = None
     if photo_obj:
         file = await context.bot.get_file(photo_obj.file_id)
         image_bytes = await file.download_as_bytearray()
         image_data = types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
-    
+   
     if not question_text and not image_data:
         await update.message.reply_photo(photo=SORU_IMAGE_URL, caption="Bir soru girsene.")
         return
-    
+   
     user_id = str(update.message.from_user.id)
-    dynamic_instruction = "Kullanıcının sorusunu maksimum 100 kelime ile cevapla. Samimi ol."
+    dynamic_instruction = "Kullanıcının sorusunu maksimum 75 kelime ile cevapla. Samimi ol, kalın yazmaya çalışma tüm yazılar aynı fontta olacak."
     if user_id == "8639720888":
         dynamic_instruction += " Kullanıcıya 'ablam' diye hitap et."
-    
-    status_msg = await update.message.reply_text("☕ Cevap hazırlanıyor...")
-    
+   
+    status_msg = await update.message.reply_text("☕ Gizem düşünüyor...")
+   
     try:
         contents = [question_text] if question_text else []
         if image_data:
             contents.append(image_data)
-        
+       
         response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(system_instruction=dynamic_instruction, temperature=0.7)
         )
-        
+       
         try:
             await status_msg.delete()
         except:
             pass
-        
+       
         if response and response.text:
             await update.message.reply_photo(photo=SORU_IMAGE_URL, caption=response.text)
         else:
-            await update.message.reply_text("Cevap üretilemedi.")
+            await update.message.reply_text("Cevap bulamadım ya.")
     except Exception as e:
         try:
             await status_msg.delete()
         except:
             pass
-        await update.message.reply_text("Hata oluştu.")
+        await update.message.reply_text("Hata.")
 
 # ==================== DUYURU (TAM ORİJİNAL) ====================
 async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -738,16 +950,16 @@ async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_DUYURU_USERS:
         await update.message.reply_text("Yetkiniz yok.")
         return
-    
+   
     text = update.message.text or update.message.caption or ""
     duyuru_text = re.sub(r'^/duyuru\s*', '', text, flags=re.IGNORECASE).strip()
-    
+   
     if not duyuru_text:
         await update.message.reply_text("Duyuru metnini yaz.")
         return
-    
+   
     context.user_data["duyuru_text"] = duyuru_text
-    
+   
     message = await update.message.reply_poll(
         question="Duyuru nasıl paylaşılsın?",
         options=["📢 Bildirimli Sabitle", "📌 Bildirimsiz Sabitle"],
@@ -762,13 +974,13 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     poll_answer = update.poll_answer
     poll_id = poll_answer.poll_id
     poll_data = context.bot_data.get(f"duyuru_poll_{poll_id}")
-    
+   
     if not poll_data:
         return
-    
+   
     selected = poll_answer.option_ids[0]
     duyuru_text = poll_data["duyuru_text"]
-    
+   
     try:
         msg = await context.bot.send_message(
             chat_id=DUYURU_GROUP_ID,
@@ -779,37 +991,37 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(chat_id=poll_data["chat_id"], text="✅ Duyuru gönderildi.")
     except Exception as e:
         print(f"Duyuru hatası: {e}")
-    
+   
     del context.bot_data[f"duyuru_poll_{poll_id}"]
 
 # ==================== HATIRLATMA (TAM ORİJİNAL) ====================
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return ConversationHandler.END
-    
+   
     chat_id = update.message.chat_id
     active_reminders = 0
     if context.job_queue:
         for job in context.job_queue.jobs():
             if job.name and f"_{chat_id}_" in job.name:
                 active_reminders += 1
-    
+   
     if active_reminders >= 3:
         await update.message.reply_text("Şu anda aktif 3 hatırlatıcın var.")
         return ConversationHandler.END
-    
+   
     args = context.args
     if not args:
         await update.message.reply_text("Örnek: /hatirlat toplantı 15:40")
         return ConversationHandler.END
-    
+   
     possible_time = args[-1]
     if re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", possible_time):
         time_text = possible_time
         reminder_text = " ".join(args[:-1])
         context.user_data["reminder_text"] = reminder_text
         context.user_data["reminder_time"] = time_text
-        
+       
         keyboard = [
             [InlineKeyboardButton("Çok Önemli", callback_data="imp_high")],
             [InlineKeyboardButton("Normal", callback_data="imp_normal")]
@@ -826,7 +1038,7 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", time_text):
         await update.message.reply_text("Hatalı format. SS:DD gir.")
         return WAITING_FOR_TIME
-    
+   
     context.user_data["reminder_time"] = time_text
     keyboard = [
         [InlineKeyboardButton("Çok Önemli", callback_data="imp_high")],
@@ -838,31 +1050,31 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
+   
     importance = "high" if query.data == "imp_high" else "normal"
     reminder_text = context.user_data.get("reminder_text")
     time_text = context.user_data.get("reminder_time")
     chat_id = query.message.chat_id
-    
+   
     final_text = f"{reminder_text} ({time_text})"
-    
+   
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.datetime.now(tz)
     hour, minute = map(int, time_text.split(":"))
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    
+   
     if target < now:
         target += datetime.timedelta(days=1)
-    
+   
     delay = (target - now).total_seconds()
     job_data = {"chat_id": chat_id, "text": final_text, "count": 0}
     job_id = f"rem_{chat_id}_{target.timestamp()}"
-    
+   
     if importance == "high":
         context.job_queue.run_repeating(send_high_importance_alert, interval=120, first=delay, data=job_data, name=f"high_{job_id}")
     else:
         context.job_queue.run_repeating(send_normal_importance_alert, interval=300, first=delay, data=job_data, name=f"normal_{job_id}")
-    
+   
     await query.edit_message_text(f"Hatırlatıcı kuruldu! Saat {time_text}")
     return ConversationHandler.END
 
@@ -923,44 +1135,49 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== ANA YAPI ====================
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(start_userbot).post_shutdown(stop_userbot).build()
-    
+   
     # Cache mekanizması ve Spam filtresi
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author), group=-2)
     app.add_handler(MessageHandler(filters.ALL, anti_spam_octopus), group=-1)
-    
+   
     # Otomatik Kelime/Filtre Dinleyici
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, filtre_dinleyici), group=3)
-    
-    # İletişim İhlali Kontrolleri (Reply ve Reaction)
+   
+    # İletişim İhlali Kontrolleri (Reply + Mention + Reaction)
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol), group=1)
+    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, kontrol_mention_check), group=1)
     app.add_handler(MessageReactionHandler(kontrol_reaction))
-    
+   
     # Muhatap Olma Anketi Tetikleyici
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, muhatap_olma_anket), group=2)
     app.add_handler(PollAnswerHandler(muhatap_poll_answer))
-    
+   
     # Komutlar
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
     app.add_handler(CommandHandler("iptal", cancel_all))
     app.add_handler(MessageHandler(filters.Regex(r'(?i)^/soru'), soru))
-    
-    # Filtre Yönetimi Komutları (ID tabanlı + tek tek/toplu silme desteği)
+   
+    # Filtre Yönetimi Komutları (ID tabanlı + tek tek/toplu silme + yedek/yükle)
     app.add_handler(CommandHandler("filtreekle", filtreekle))
     app.add_handler(CommandHandler("filtresil", filtresil))
     app.add_handler(CommandHandler("filtreliste", filtreliste))
     app.add_handler(CommandHandler("filtrekisiekle", filtrekisiekle))
     app.add_handler(CommandHandler("filtrekisisil", filtrekisisil))
-    
-    # Duyuru Anketi
-    app.add_handler(CommandHandler("duyuru", duyuru_start))
-    app.add_handler(PollAnswerHandler(duyuru_poll_answer))
-    
-    # Kontrol Listesi Yönetimi (ID tabanlı)
+    app.add_handler(CommandHandler("filtreyedekle", filtreyedekle))
+    app.add_handler(CommandHandler("filtreyukle", filtreyukle))
+   
+    # Kontrol Listesi Yönetimi (ID tabanlı + yedek/yükle)
     app.add_handler(CommandHandler("kontrolet", kontrolet))
     app.add_handler(CommandHandler("kontrolliste", kontrolliste))
     app.add_handler(CommandHandler("kontrolsil", kontrolsil))
-    
+    app.add_handler(CommandHandler("kontrolyedekle", kontrolyedekle))
+    app.add_handler(CommandHandler("kontrolyukle", kontrolyukle))
+   
+    # Duyuru Anketi
+    app.add_handler(CommandHandler("duyuru", duyuru_start))
+    app.add_handler(PollAnswerHandler(duyuru_poll_answer))
+   
     # Hatırlatıcı Akışı
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("hatirlat", hatirlat_start)],
@@ -973,11 +1190,11 @@ def main():
     )
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
-    
+   
     # 155 Dakikada Bir Rastgele Kural
     if app.job_queue:
         app.job_queue.run_repeating(post_random_rule, interval=155 * 60, first=60)
-    
+   
     print("Bot başlatılıyor...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
