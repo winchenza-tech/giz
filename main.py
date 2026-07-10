@@ -52,10 +52,10 @@ RULES = [
     """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.""",
     """📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.""",
     """📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.""",
-    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.""",
-    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @ admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.""",
+    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebi dir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.""",
+    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.""",
     """📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.""",
-    """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.""",
+    """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebi dir.""",
     """📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.""",
     """📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.""",
     """📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.""",
@@ -173,7 +173,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
 
     if len(mentioned) < 2:
-        await update.message.reply_text("İki üyeyi etiketle. Örnek: /kontrolet @ahmet @ayse")
+        await update.message.reply_text("İki üyeyi etiketlemelisin. Örnek: /kontrolet @Özgür @Tayyip")
         return
 
     u1 = mentioned[0]
@@ -190,9 +190,9 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_kontrol_listesi(data)
 
     await update.message.reply_text(
-        f"✅ Madem bu ikisi muhatap olmak istemiyor, iyi... iletişim yasağı eklendi\n"
+        f"✅ İletişim yasağı eklendi!\n"
         f"#{new_pair['pair_id']} → {u1['name']} ↔ {u2['name']}\n"
-        f"Bot gözlerini açtı."
+        f"Reply veya emoji tepki verirse bot otomatik /warn verecek ona göre."
     )
 
 
@@ -241,7 +241,7 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(data["pairs"]) < original:
         save_kontrol_listesi(data)
-        await update.message.reply_text(f"✅ #{pair_id} numaralı yasağı listeden kaldırdın.")
+        await update.message.reply_text(f"✅ #{pair_id} numaralı yasağı listeden kaldırıldı.")
     else:
         await update.message.reply_text(f"#{pair_id} bulunamadı.")
 
@@ -276,7 +276,7 @@ async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TY
         # İhlal eden = sender
         if (sender.id == u1_id and replied_user.id == u2_id) or (sender.id == u2_id and replied_user.id == u1_id):
             mention = get_user_mention(sender)
-            warn_text = f"/warn {mention} İletişim yasağı ihlali (yanıt verildi)"
+            warn_text = f"/warn {mention} Hooop İletişim yasağı ihlali (Reply)"
 
             # İhlal eden kişinin mesajına reply olarak /warn at
             try:
@@ -314,7 +314,7 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if (reactor.id == u1_id and original_author_id == u2_id) or (reactor.id == u2_id and original_author_id == u1_id):
             mention = get_user_mention(reactor)
-            warn_text = f"/warn {mention} İletişim yasağı ihlali (Emoji Tepki)"
+            warn_text = f"/warn {mention}Hooop iletişim yasağı ihlali (Emoji Tepki)"
 
             # Emoji atılan mesajı alıntılayarak /warn at
             try:
@@ -336,7 +336,7 @@ async def send_kontrol_bildirim(context, ihlal_tipi, warn_text, chat_id):
     try:
         await context.bot.send_message(
             chat_id=KONTROL_BILDIRIM_GROUP_ID,
-            text=f"🚨 İletişim Yasağı İhlali ({ihlal_tipi})\n\n{warn_text}\n\nGrup: {chat_id}"
+            text=f"🚨 Bunlar duramadı :D iletişim Yasağı İhlali ({ihlal_tipi})\n\n{warn_text}\n\nGrup: {chat_id}"
         )
     except Exception as e:
         print(f"Yönetim grubuna bildirim gönderilemedi: {e}")
