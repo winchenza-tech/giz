@@ -109,9 +109,14 @@ def save_json(file_path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 async def log_to_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Yönetim log grubuna mesaj gönderir."""
+    """Yönetim log grubuna mesaj gönderir (HTML yapısında, Linkli)."""
     try:
-        await context.bot.send_message(chat_id=int(ADMIN_LOG_GROUP_ID), text=text)
+        await context.bot.send_message(
+            chat_id=int(ADMIN_LOG_GROUP_ID), 
+            text=text, 
+            parse_mode="HTML", 
+            disable_web_page_preview=True
+        )
     except Exception as e:
         print(f"Admin log gönderilemedi: {e}")
 
@@ -134,7 +139,12 @@ def get_violation_pair(user1_id, user2_id):
     return None
 
 async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, message_id, p1_name, p2_name, reason):
-    """Userbot ile warn atar ve loglar."""
+    """Userbot ile warn atar ve -51'li gruba mesaj ID/link ile loglar."""
+    # Özel grup mesajı linki oluşturma (-100 kısmını silerek)
+    chat_id_str = str(chat_id)
+    link_chat_id = chat_id_str.replace("-100", "")
+    msg_link = f"https://t.me/c/{link_chat_id}/{message_id}"
+
     if userbot and userbot.is_connected:
         try:
             await userbot.send_message(
@@ -142,11 +152,26 @@ async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, mess
                 text=f"/warn İletişim İhlali: Karşılıklı muhatap olmama kararına uyulmadı.\nSebep: {reason}",
                 reply_to_message_id=message_id
             )
-            await log_to_admin(context, f"⚠️ **İhlal Tespit Edildi ve Warn Atıldı!**\nKişiler: {p1_name} ↔ {p2_name}\nSebep: {reason}\nDurum: Başarılı ✅")
+            log_text = (f"⚠️ <b>İhlal Tespit Edildi ve Warn Atıldı!</b> ✅\n"
+                        f"👤 Kişiler: {p1_name} ↔ {p2_name}\n"
+                        f"📌 Sebep: {reason}\n"
+                        f"🆔 Mesaj ID: <code>{message_id}</code>\n"
+                        f"🔗 <a href='{msg_link}'>Mesaja Git</a>")
+            await log_to_admin(context, log_text)
         except Exception as e:
-            await log_to_admin(context, f"❌ **İhlal tespit edildi ama Warn ATILAMADI!**\nKişiler: {p1_name} ↔ {p2_name}\nSebep: {reason}\nHata Kodu: {e}\n*Not: Userbot mesajı bulamamış veya grupta yetkisi/oturumu düşmüş olabilir.*")
+            log_text = (f"❌ <b>İhlal tespit edildi ama Warn ATILAMADI!</b>\n"
+                        f"👤 Kişiler: {p1_name} ↔ {p2_name}\n"
+                        f"📌 Sebep: {reason}\n"
+                        f"🆔 Mesaj ID: <code>{message_id}</code>\n"
+                        f"🔗 <a href='{msg_link}'>Mesaja Git</a>\n"
+                        f"⚠️ Hata Kodu: <code>{e}</code>")
+            await log_to_admin(context, log_text)
     else:
-        await log_to_admin(context, f"❌ **İhlal tespit edildi ancak Userbot BAĞLI DEĞİL!**\nKişiler: {p1_name} ↔ {p2_name}")
+        log_text = (f"❌ <b>İhlal tespit edildi ancak Userbot BAĞLI DEĞİL!</b>\n"
+                    f"👤 Kişiler: {p1_name} ↔ {p2_name}\n"
+                    f"🆔 Mesaj ID: <code>{message_id}</code>\n"
+                    f"🔗 <a href='{msg_link}'>Mesaja Git</a>")
+        await log_to_admin(context, log_text)
 
 # ==================== KURALLAR (TAM HALİ) ====================
 RULES = [
@@ -158,9 +183,9 @@ RULES = [
     "📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.",
     "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.",
     "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.",
-    "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.” — Montaigne",
+    "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.",
     "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.",
-    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.",
+    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.\",
 ]
 
 async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
@@ -241,14 +266,23 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
 
 # ==================== KONTROL (İLETİŞİM YASAĞI) ====================
-# "konuşma" ifadesi genel günlük mesajları bozduğu için sadece "muhatap olma" kalıplarına sabitlendi.
-MUHATAP_REGEX = re.compile(r'(?i)(benimle muhatap olma|muhatap olma|muhatap olmayalım)')
+# "muhatap olmama" mesajlarını es geçmesi için Regex güncellendi.
+MUHATAP_REGEX = re.compile(r'(?i)\b(benimle muhatap olma|muhatap olma|muhatap olmayalım)\b(?!ma)')
 
 async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.chat.id) != ALLOWED_GROUP_ID or not update.message.reply_to_message:
         return
 
+    # 1. Önlem: Diğer botların mesajlarına anket atma!
+    if update.message.from_user.is_bot:
+        return
+
     text = update.message.text or update.message.caption or ""
+    
+    # 2. Önlem: Komut içeren veya /warn ile başlayan mesajları yoksay
+    if text.startswith("/"):
+        return
+
     if not MUHATAP_REGEX.search(text):
         return
 
@@ -258,7 +292,6 @@ async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not sender or not target or sender.id == target.id:
         return
 
-    # Eğer bu spesifik ikili zaten muhatap olmama listesindeyse tekrar anket ATMA.
     if get_violation_pair(sender.id, target.id):
         return
 
@@ -318,7 +351,7 @@ async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
                 chat_id=poll_data["chat_id"],
                 text=f"✅ İletişim yasağı otomatik eklendi!\n{poll_data['sender_name']} ↔ {poll_data['target_name']}\nArtık birbirinize reply veya emoji atamazsınız."
             )
-            await log_to_admin(context, f"✅ **Yeni İletişim Yasağı (Anket ile):**\n{poll_data['sender_name']} ↔ {poll_data['target_name']}")
+            await log_to_admin(context, f"✅ <b>Yeni İletişim Yasağı (Anket ile):</b>\n{poll_data['sender_name']} ↔ {poll_data['target_name']}")
     
     del context.bot_data[f"muhatap_poll_{poll_id}"]
 
@@ -349,7 +382,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_json(KONTROL_FILE, data)
         
         await update.message.reply_text(f"✅ Liste güncellendi. {get_user_mention(u1)} ↔ {get_user_mention(u2)} artık birbirleriyle muhatap olamazlar.")
-        await log_to_admin(context, f"✅ **Yeni İletişim Yasağı (Yönetici komutu ile):**\n{get_user_mention(u1)} ↔ {get_user_mention(u2)}")
+        await log_to_admin(context, f"✅ <b>Yeni İletişim Yasağı (Yönetici komutu ile):</b>\n{get_user_mention(u1)} ↔ {get_user_mention(u2)}")
     except Exception as e:
         await update.message.reply_text("Kullanıcılar bulunamadı")
 
@@ -384,7 +417,7 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(data["pairs"]) < original_len:
         save_json(KONTROL_FILE, data)
         await update.message.reply_text(f"✅ {pair_id} ID'li kural başarıyla silindi.")
-        await log_to_admin(context, f"🗑️ İletişim Yasağı Kaldırıldı: ID {pair_id}")
+        await log_to_admin(context, f"🗑️ <b>İletişim Yasağı Kaldırıldı:</b> ID {pair_id}")
     else:
         await update.message.reply_text("Belirtilen ID bulunamadı.")
 
@@ -678,7 +711,7 @@ def main():
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, filtre_dinleyici), group=3)
 
     # İletişim İhlali Kontrolleri (Reply ve Reaction)
-    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, Gateway_ihlal_kontrol := kontrol_ihlal_kontrol), group=1)
+    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol), group=1)
     app.add_handler(MessageReactionHandler(kontrol_reaction))
     
     # Muhatap Olma Anketi Tetikleyici
