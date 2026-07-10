@@ -65,7 +65,10 @@ if PYROGRAM_API_ID and PYROGRAM_API_HASH and PYROGRAM_SESSION_STRING:
 async def start_userbot(app: Application):
     if userbot:
         print("Userbot başlatılıyor...")
-        await userbot.start()
+        try:
+            await userbot.start()
+        except Exception as e:
+            print(f"❌ Userbot başlatılamadı: {e}")
 
 async def stop_userbot(app: Application):
     if userbot:
@@ -119,9 +122,15 @@ def get_violation_pair(user1_id, user2_id):
     """Eğer iki kullanıcı listeyse çifti döndürür, aksi halde None"""
     data = load_kontrol_listesi()
     for pair in data["pairs"]:
-        ids = [pair["user1"]["id"], pair["user2"]["id"]]
-        if user1_id in ids and user2_id in ids:
-            return pair
+        try:
+            p1_id = int(pair["user1"]["id"])
+            p2_id = int(pair["user2"]["id"])
+            u1_id = int(user1_id)
+            u2_id = int(user2_id)
+            if (u1_id == p1_id and u2_id == p2_id) or (u1_id == p2_id and u2_id == p1_id):
+                return pair
+        except (ValueError, KeyError, TypeError):
+            continue
     return None
 
 async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, message_id, p1_name, p2_name, reason):
@@ -144,12 +153,12 @@ RULES = [
     "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.",
     "📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.",
     "📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.",
-    "📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebi dir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.",
+    "📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.",
     "📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.",
     "📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.",
-    "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebi dir.",
+    "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.",
     "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.",
-    "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.",
+    "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.” — Montaigne",
     "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.",
     "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.",
 ]
@@ -205,7 +214,7 @@ async def filtresil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if kelime in data:
         del data[kelime]
         save_json(FILTRE_FILE, data)
-        await update.message.reply_text(f"✅ '{kelime}' filtresi başarıyla silindi.")
+        await update.message.reply_text(f"✅ '{kelime}' filtresi silindi.")
     else:
         await update.message.reply_text(f"❌ '{kelime}' kelimesine ait filtre bulunamadı.")
 
@@ -232,7 +241,8 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
 
 # ==================== KONTROL (İLETİŞİM YASAĞI) ====================
-MUHATAP_REGEX = re.compile(r'(?i)(muhatap olma|benimle muhatap olma|konuşmayalım|konuşma|muhatap olmayalım)')
+# "konuşma" ifadesi genel günlük mesajları bozduğu için sadece "muhatap olma" kalıplarına sabitlendi.
+MUHATAP_REGEX = re.compile(r'(?i)(benimle muhatap olma|muhatap olma|muhatap olmayalım)')
 
 async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.chat.id) != ALLOWED_GROUP_ID or not update.message.reply_to_message:
@@ -248,6 +258,7 @@ async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not sender or not target or sender.id == target.id:
         return
 
+    # Eğer bu spesifik ikili zaten muhatap olmama listesindeyse tekrar anket ATMA.
     if get_violation_pair(sender.id, target.id):
         return
 
@@ -340,7 +351,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Liste güncellendi. {get_user_mention(u1)} ↔ {get_user_mention(u2)} artık birbirleriyle muhatap olamazlar.")
         await log_to_admin(context, f"✅ **Yeni İletişim Yasağı (Yönetici komutu ile):**\n{get_user_mention(u1)} ↔ {get_user_mention(u2)}")
     except Exception as e:
-        await update.message.reply_text("Kullanıcılar bulunamadı. Lütfen geçerli kullanıcı adları veya ID'ler girin.")
+        await update.message.reply_text("Kullanıcılar bulunamadı")
 
 async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_kontrol_listesi()
@@ -358,13 +369,13 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if not context.args:
-        await update.message.reply_text("Kullanım: /kontrolsil <Pair ID>")
+        await update.message.reply_text("Kullanım: /kontrolsil 2")
         return
         
     try:
         pair_id = int(context.args[0])
     except ValueError:
-        return await update.message.reply_text("Lütfen geçerli bir ID girin.")
+        return await update.message.reply_text("Lütfen geçerli bir ID gir.")
         
     data = load_kontrol_listesi()
     original_len = len(data["pairs"])
@@ -373,7 +384,7 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(data["pairs"]) < original_len:
         save_json(KONTROL_FILE, data)
         await update.message.reply_text(f"✅ {pair_id} ID'li kural başarıyla silindi.")
-        await log_to_admin(context, f"🗑️ **İletişim Yasağı Kaldırıldı:** ID {pair_id}")
+        await log_to_admin(context, f"🗑️ İletişim Yasağı Kaldırıldı: ID {pair_id}")
     else:
         await update.message.reply_text("Belirtilen ID bulunamadı.")
 
@@ -667,7 +678,7 @@ def main():
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, filtre_dinleyici), group=3)
 
     # İletişim İhlali Kontrolleri (Reply ve Reaction)
-    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol), group=1)
+    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, Gateway_ihlal_kontrol := kontrol_ihlal_kontrol), group=1)
     app.add_handler(MessageReactionHandler(kontrol_reaction))
     
     # Muhatap Olma Anketi Tetikleyici
