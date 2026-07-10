@@ -123,17 +123,17 @@ async def trigger_userbot_warn(chat_id, message_id):
 
 # ==================== KURALLAR ====================
 RULES = [
-    "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebi dir.\n“İnsanın mahremiyeti, özgürlüğünün temelidir.” — John Stuart Mill",
-    "📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.\n“Kaba söz, zayıf düşüncenin sesidir.” — Arthur Schopenhauer",
-    "📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.\n“Sessizlik, tartışmayı bitirmenin en zarif yoludur.” — Friedrich Nietzsche",
-    "📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebi dir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.\n\"Yabancıya karşı saygı, kişinin kendi evine duyduğu saygının bir aynasıdır.\" — Stefan Zweig",
-    "📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.\n“Sessizlik kötülüğün en sadık müttefikidir” — Paulo Freire",
-    "📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.\n“İftira, ahlaksızlığın en sinsi biçimidir.” — Jean-Jacques Rousseau",
-    "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebi dir.\n“Şiddeti savunan, aklı terk etmiştir.” — Albert Camus",
+    "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.",
+    "📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.",
+    "📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.",
+    "📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebi dir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.",
+    "📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.",
+    "📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.",
+    "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.",
     "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.\n“İnsanı bozan şey özgürlük değil, ölçüsüzlüktür.” — Montesquieu",
-    "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.\n“Zevk, tekrarlandıkça değil, tazeyken değerlidir; geciken tat damakta kalmaz.” — Montaigne",
-    "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.\n“Misafirlik davetle olur.” — Türk atasözü",
-    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebi dir.\n“Her topluluk, saygı ve sınır bilinciyle ayakta kalır.” — Alexis de Tocqueville",
+    "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.",
+    "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.",
+    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.",
 ]
 
 async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
