@@ -7,7 +7,7 @@ import json
 import random
 from collections import OrderedDict
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, helpers
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, ConversationHandler, MessageHandler, filters,
@@ -42,9 +42,11 @@ WAITING_FOR_IMPORTANCE = 2
 ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780", "8150494686", "8242824985"]
 ALLOWED_KONTROL_USERS = ALLOWED_DUYURU_USERS
 DUYURU_GROUP_ID = "-1003297262036"
+ADMIN_LOG_GROUP_ID = "-5199865414"
 
 RULES_SENT_FILE = "rules_sent.json"
 KONTROL_FILE = "kontrol_listesi.json"
+FILTRE_FILE = "filtreler.json"
 
 RECENT_MESSAGE_AUTHORS = OrderedDict()
 MAX_CACHE_SIZE = 2500
@@ -99,29 +101,41 @@ def save_json(file_path, data):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+async def log_to_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
+    """Yönetim log grubuna mesaj gönderir."""
+    try:
+        await context.bot.send_message(chat_id=int(ADMIN_LOG_GROUP_ID), text=text)
+    except Exception as e:
+        print(f"Admin log gönderilemedi: {e}")
+
 def load_kontrol_listesi():
     return load_json(KONTROL_FILE, {"pairs": [], "next_pair_id": 1})
 
-def check_violation(user1_id, user2_id):
+def get_violation_pair(user1_id, user2_id):
+    """Eğer iki kullanıcı listeyse çifti döndürür, aksi halde None"""
     data = load_kontrol_listesi()
     for pair in data["pairs"]:
         ids = [pair["user1"]["id"], pair["user2"]["id"]]
         if user1_id in ids and user2_id in ids:
-            return True
-    return False
+            return pair
+    return None
 
-async def trigger_userbot_warn(chat_id, message_id):
+async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, message_id, p1_name, p2_name, reason):
+    """Userbot ile warn atar ve loglar."""
     if userbot and userbot.is_connected:
         try:
             await userbot.send_message(
                 chat_id=int(chat_id),
-                text="/warn İletişim İhlali: Karşılıklı muhatap olmama kararına uyulmadı.",
+                text=f"/warn İletişim İhlali: Karşılıklı muhatap olmama kararına uyulmadı.\nSebep: {reason}",
                 reply_to_message_id=message_id
             )
+            await log_to_admin(context, f"⚠️ **İhlal Tespit Edildi ve Warn Atıldı!**\nKişiler: {p1_name} ↔ {p2_name}\nSebep: {reason}\nDurum: Başarılı ✅")
         except Exception as e:
-            print(f"Userbot warn hatası: {e}")
+            await log_to_admin(context, f"❌ **İhlal tespit edildi ama Warn ATILAMADI!**\nKişiler: {p1_name} ↔ {p2_name}\nSebep: {reason}\nHata Kodu: {e}\n*Not: Userbot mesajı bulamamış veya grupta yetkisi/oturumu düşmüş olabilir.*")
+    else:
+        await log_to_admin(context, f"❌ **İhlal tespit edildi ancak Userbot BAĞLI DEĞİL!**\nKişiler: {p1_name} ↔ {p2_name}")
 
-# ==================== KURALLAR ====================
+# ==================== KURALLAR (TAM HALİ) ====================
 RULES = [
     "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.",
     "📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.",
@@ -130,10 +144,10 @@ RULES = [
     "📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.",
     "📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.",
     "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.",
-    "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.\n“İnsanı bozan şey özgürlük değil, ölçüsüzlüktür.” — Montesquieu",
+    "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.",
     "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.",
     "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.",
-    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.",
+    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebi dir.",
 ]
 
 async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
@@ -161,8 +175,60 @@ async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
     data["sent"] = list(sent)
     save_json(RULES_SENT_FILE, data)
 
+# ==================== FİLTRE ÖZELLİĞİ ====================
+async def filtreekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Kullanım: /filtreekle kelime @kisi1 @kisi2")
+        return
+    kelime = args[0].lower()
+    kisiler = " ".join(args[1:])
+    data = load_json(FILTRE_FILE, {})
+    data[kelime] = kisiler
+    save_json(FILTRE_FILE, data)
+    await update.message.reply_text(f"✅ Filtre başarıyla eklendi.\n'{kelime}' yazıldığında etiketlenecekler: {kisiler}")
+
+async def filtresil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if not context.args:
+        await update.message.reply_text("Kullanım: /filtresil kelime")
+        return
+    kelime = context.args[0].lower()
+    data = load_json(FILTRE_FILE, {})
+    if kelime in data:
+        del data[kelime]
+        save_json(FILTRE_FILE, data)
+        await update.message.reply_text(f"✅ '{kelime}' filtresi silindi.")
+    else:
+        await update.message.reply_text(f"❌ '{kelime}' kelimesine ait filtre bulunamadı.")
+
+async def filtreliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_json(FILTRE_FILE, {})
+    if not data:
+        await update.message.reply_text("Aktif filtre bulunmamaktadır.")
+        return
+    text = "📝 **Aktif Filtreler:**\n\n"
+    for k, v in data.items():
+        text += f"- **{k}** -> {v}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text: return
+    if str(update.message.chat.id) != ALLOWED_GROUP_ID: return
+    
+    text = update.message.text.lower()
+    data = load_json(FILTRE_FILE, {})
+    
+    for kelime, kisiler in data.items():
+        if re.search(r'\b' + re.escape(kelime) + r'\b', text):
+            await update.message.reply_text(kisiler)
+            break
+
 # ==================== KONTROL (İLETİŞİM YASAĞI) ====================
-MUHATAP_REGEX = re.compile(r'(?i)(muhatap olma|benimle muhatap olma|muhatap olmayalım)')
+MUHATAP_REGEX = re.compile(r'(?i)(muhatap olma|benimle muhatap olma|konuşmayalım|konuşma|muhatap olmayalım)')
 
 async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.chat.id) != ALLOWED_GROUP_ID or not update.message.reply_to_message:
@@ -178,6 +244,14 @@ async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not sender or not target or sender.id == target.id:
         return
 
+    if get_violation_pair(sender.id, target.id):
+        return
+
+    active_polls = context.bot_data.get("active_polls", set())
+    pair_key = tuple(sorted([sender.id, target.id]))
+    if pair_key in active_polls:
+        return
+
     poll = await context.bot.send_poll(
         chat_id=update.message.chat_id,
         question="Bu kişinin seninle muhatap olmasını istemediğini belirtiyorsun. Aynı şekilde sen de bu kişiye cevap, laf ve hatta emoji dahi atmayacaksın. Kabul ediyor musun?",
@@ -186,12 +260,16 @@ async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_to_message_id=update.message.message_id
     )
 
+    active_polls.add(pair_key)
+    context.bot_data["active_polls"] = active_polls
+
     context.bot_data[f"muhatap_poll_{poll.poll.id}"] = {
         "chat_id": update.message.chat_id,
         "sender_id": sender.id,
         "target_id": target.id,
         "sender_name": get_user_mention(sender),
         "target_name": get_user_mention(target),
+        "pair_key": pair_key
     }
 
 async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -199,15 +277,19 @@ async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
     poll_id = poll_answer.poll_id
     poll_data = context.bot_data.get(f"muhatap_poll_{poll_id}")
     
-    # Kural 1: Sadece tetikleyen (anketi oluşturan) kişinin cevabı geçerli
-    if not poll_data or poll_answer.user.id != poll_data["sender_id"]:
+    if not poll_data:
+        return
+        
+    if "active_polls" in context.bot_data:
+        context.bot_data["active_polls"].discard(poll_data["pair_key"])
+
+    if poll_answer.user.id != poll_data["sender_id"]:
         return
 
     if poll_answer.option_ids[0] == 0:  # Evet
         data = load_kontrol_listesi()
         
-        # Zaten listedeler mi kontrolü
-        if not check_violation(poll_data["sender_id"], poll_data["target_id"]):
+        if not get_violation_pair(poll_data["sender_id"], poll_data["target_id"]):
             new_pair = {
                 "pair_id": data["next_pair_id"],
                 "user1": {"id": poll_data["sender_id"], "name": poll_data["sender_name"]},
@@ -219,8 +301,9 @@ async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             await context.bot.send_message(
                 chat_id=poll_data["chat_id"],
-                text=f"✅ İletişim yasağı otomatik eklendi!\n{poll_data['sender_name']} ↔ {poll_data['target_name']}\nArtık birbirinize reply,laf veya emoji atamazsınız."
+                text=f"✅ İletişim yasağı otomatik eklendi!\n{poll_data['sender_name']} ↔ {poll_data['target_name']}\nArtık birbirinize reply veya emoji atamazsınız."
             )
+            await log_to_admin(context, f"✅ **Yeni İletişim Yasağı (Anket ile):**\n{poll_data['sender_name']} ↔ {poll_data['target_name']}")
     
     del context.bot_data[f"muhatap_poll_{poll_id}"]
 
@@ -229,7 +312,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if len(context.args) < 2 or not userbot:
-        await update.message.reply_text("Kullanım: /kontrolet @reis_tayyip_53xd @ozgur_ozel_xd")
+        await update.message.reply_text("Kullanım: /kontrolet @tayyip_reis_53 @ozgur_ozel_xd")
         return
 
     try:
@@ -237,7 +320,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u2 = await userbot.get_users(context.args[1])
         
         data = load_kontrol_listesi()
-        if check_violation(u1.id, u2.id):
+        if get_violation_pair(u1.id, u2.id):
             await update.message.reply_text("Bu iki kullanıcı zaten listede.")
             return
             
@@ -250,9 +333,10 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["next_pair_id"] += 1
         save_json(KONTROL_FILE, data)
         
-        await update.message.reply_text(f"✅ Liste güncellendi. {get_user_mention(u1)} ↔ {get_user_mention(u2)} artık birbirleriyle muhatap olamazlar yakalarsam yerim adamı.")
+        await update.message.reply_text(f"✅ Liste güncellendi. {get_user_mention(u1)} ↔ {get_user_mention(u2)} artık birbirleriyle muhatap olamazlar.")
+        await log_to_admin(context, f"✅ **Yeni İletişim Yasağı (Yönetici komutu ile):**\n{get_user_mention(u1)} ↔ {get_user_mention(u2)}")
     except Exception as e:
-        await update.message.reply_text("Kullanıcılar bulunamadı.")
+        await update.message.reply_text("Kullanıcılar bulunamadı")
 
 async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_kontrol_listesi()
@@ -276,7 +360,7 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         pair_id = int(context.args[0])
     except ValueError:
-        return await update.message.reply_text("Geçerli bir ID gir ya")
+        return await update.message.reply_text("Lütfen geçerli bir ID gir.")
         
     data = load_kontrol_listesi()
     original_len = len(data["pairs"])
@@ -284,41 +368,54 @@ async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if len(data["pairs"]) < original_len:
         save_json(KONTROL_FILE, data)
-        await update.message.reply_text(f"✅ {pair_id} sildim gitti.")
+        await update.message.reply_text(f"✅ {pair_id} ID'li kural başarıyla silindi.")
+        await log_to_admin(context, f"🗑️ İletişim Yasağı Kaldırıldı: ID {pair_id}")
     else:
-        await update.message.reply_text("Belirtilen ID bulamadım :(")
+        await update.message.reply_text("Belirtilen ID bulunamadı.")
 
-# --- İhlal Yakalayıcılar ---
 async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg or not msg.reply_to_message:
-        return
+    if not msg or not msg.reply_to_message: return
         
-    sender_id = msg.from_user.id
-    target_id = msg.reply_to_message.from_user.id
+    sender = msg.from_user
+    target = msg.reply_to_message.from_user
+    if not sender or not target: return
     
-    if check_violation(sender_id, target_id):
-        await trigger_userbot_warn(msg.chat_id, msg.message_id)
+    pair = get_violation_pair(sender.id, target.id)
+    if pair:
+        await trigger_userbot_warn(
+            context,
+            msg.chat_id,
+            msg.message_id,
+            pair["user1"]["name"],
+            pair["user2"]["name"],
+            "Yasaklı olduğu mesaja Yanıt (Reply) attı."
+        )
 
 async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reaction = update.message_reaction
-    if not reaction:
-        return
+    if not reaction: return
         
     actor_id = reaction.actor.user.id if reaction.actor and reaction.actor.user else None
-    if not actor_id:
-        return
+    if not actor_id: return
         
     msg_id = reaction.message_id
     author_id = RECENT_MESSAGE_AUTHORS.get(msg_id)
     
-    if not author_id or actor_id == author_id:
-        return
+    if not author_id or actor_id == author_id: return
         
-    if check_violation(actor_id, author_id):
-        await trigger_userbot_warn(reaction.chat.id, msg_id)
+    pair = get_violation_pair(actor_id, author_id)
+    if pair:
+        await trigger_userbot_warn(
+            context,
+            reaction.chat.id,
+            msg_id,
+            pair["user1"]["name"],
+            pair["user2"]["name"],
+            "Yasaklı olduğu mesaja Tepki (Emoji) bıraktı."
+        )
 
-# ==================== /SORU ====================
+# ==================== /SORU (TAM ORİJİNAL KOD) ====================
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == "private" or str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
@@ -377,7 +474,7 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         await update.message.reply_text("Hata oluştu.")
 
-# ==================== DUYURU ====================
+# ==================== DUYURU (TAM ORİJİNAL KOD) ====================
 async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return
@@ -425,13 +522,17 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     del context.bot_data[f"duyuru_poll_{poll_id}"]
 
-# ==================== HATIRLATMA ====================
+# ==================== HATIRLATMA (TAM ORİJİNAL KOD) ====================
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return ConversationHandler.END
 
     chat_id = update.message.chat_id
-    active_reminders = sum(1 for job in context.job_queue.jobs() if job.name and f"_{chat_id}_" in job.name)
+    active_reminders = 0
+    if context.job_queue:
+        for job in context.job_queue.jobs():
+            if job.name and f"_{chat_id}_" in job.name:
+                active_reminders += 1
 
     if active_reminders >= 3:
         await update.message.reply_text("Şu anda aktif 3 hatırlatıcın var.")
@@ -444,11 +545,13 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     possible_time = args[-1]
     if re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", possible_time):
-        context.user_data["reminder_text"] = " ".join(args[:-1])
-        context.user_data["reminder_time"] = possible_time
+        time_text = possible_time
+        reminder_text = " ".join(args[:-1])
+        context.user_data["reminder_text"] = reminder_text
+        context.user_data["reminder_time"] = time_text
         keyboard = [[InlineKeyboardButton("Çok Önemli", callback_data="imp_high")],
                     [InlineKeyboardButton("Normal", callback_data="imp_normal")]]
-        await update.message.reply_text(f"Saat {possible_time} için önem?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(f"Saat {time_text} için önem?", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_IMPORTANCE
     else:
         context.user_data["reminder_text"] = " ".join(args)
@@ -496,21 +599,23 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def send_high_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
-    if job.data["count"] >= 5:
+    data = job.data
+    if data["count"] >= 5:
         job.schedule_removal()
         return
-    job.data["count"] += 1
+    data["count"] += 1
     keyboard = [[InlineKeyboardButton("Okudum", callback_data=f"read_{job.name}")]]
-    await context.bot.send_message(chat_id=job.data["chat_id"], text=f"Hatırlatma: {job.data['text']}", reply_markup=InlineKeyboardMarkup(keyboard))
+    await context.bot.send_message(chat_id=data["chat_id"], text=f"Hatırlatma: {data['text']}", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def send_normal_importance_alert(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
-    if job.data["count"] >= 4:
+    data = job.data
+    if data["count"] >= 4:
         job.schedule_removal()
         return
-    job.data["count"] += 1
+    data["count"] += 1
     keyboard = [[InlineKeyboardButton("Okudum", callback_data=f"read_{job.name}")]]
-    await context.bot.send_message(chat_id=job.data["chat_id"], text=f"Hatırlatma: {job.data['text']}", reply_markup=InlineKeyboardMarkup(keyboard))
+    await context.bot.send_message(chat_id=data["chat_id"], text=f"Hatırlatma: {data['text']}", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -523,10 +628,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
-    removed = sum(1 for job in context.job_queue.jobs() if job.name and f"_{chat_id}_" in job.name and not job.schedule_removal())
+    removed = 0
+    for job in context.job_queue.jobs():
+        if job.name and f"_{chat_id}_" in job.name:
+            job.schedule_removal()
+            removed += 1
     await update.message.reply_text(f"{removed} hatırlatıcı silindi." if removed else "Aktif hatırlatıcı yok.")
 
-# ==================== ANTI SPAM ====================
+# ==================== ANTI SPAM (TAM ORİJİNAL KOD) ====================
 async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -550,6 +659,9 @@ def main():
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author), group=-2)
     app.add_handler(MessageHandler(filters.ALL, anti_spam_octopus), group=-1)
 
+    # Otomatik Kelime/Filtre Dinleyici
+    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, filtre_dinleyici), group=3)
+
     # İletişim İhlali Kontrolleri (Reply ve Reaction)
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol), group=1)
     app.add_handler(MessageReactionHandler(kontrol_reaction))
@@ -563,6 +675,11 @@ def main():
     app.add_handler(CommandHandler("yardim", send_guide))
     app.add_handler(CommandHandler("iptal", cancel_all))
     app.add_handler(MessageHandler(filters.Regex(r'(?i)^/soru'), soru))
+    
+    # Filtre Yönetimi Komutları
+    app.add_handler(CommandHandler("filtreekle", filtreekle))
+    app.add_handler(CommandHandler("filtresil", filtresil))
+    app.add_handler(CommandHandler("filtreliste", filtreliste))
     
     # Duyuru Anketi
     app.add_handler(CommandHandler("duyuru", duyuru_start))
@@ -586,12 +703,11 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
 
-    # 155 Dakikada Bir Rastgele Kural (Dokunulmadı)
+    # 155 Dakikada Bir Rastgele Kural
     if app.job_queue:
         app.job_queue.run_repeating(post_random_rule, interval=155 * 60, first=60)
 
     print("Bot başlatılıyor...")
-    # allowed_updates ile Reaction güncellemelerinin bota düştüğünden emin oluyoruz.
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
