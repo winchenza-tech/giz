@@ -39,37 +39,35 @@ ALLOWED_KONTROL_USERS = ALLOWED_DUYURU_USERS
 DUYURU_GROUP_ID = "-1003297262036"
 KONTROL_BILDIRIM_GROUP_ID = 6781642262
 
+# ==================== KURALLAR (Sadece kural metinleri) ====================
 RULES = [
-    """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebi dir.""",
-    """📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.""",
-    """📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.""",
-    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebi dir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.""",
-    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.""",
-    """📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.""",
-    """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebi dir.""",
-    """📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.""",
-    """📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.""",
-    """📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.""",
-    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebi dir.""",
+    "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.",
+    "📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.",
+    "📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.",
+    "📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.",
+    "📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.",
+    "📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.",
+    "📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.",
+    "📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.",
+    "📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.",
+    "📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.",
+    "📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebi dir.",
 ]
 
 RULES_SENT_FILE = "rules_sent.json"
 KONTROL_FILE = "kontrol_listesi.json"
 
 # ==================== CACHE ====================
-RECENT_MESSAGE_AUTHORS = OrderedDict()          # message_id -> user_id
-USERNAME_TO_ID_CACHE = {}                       # username.lower() -> user_id
+RECENT_MESSAGE_AUTHORS = OrderedDict()      # message_id -> user_id
+USERNAME_TO_ID_CACHE = {}                   # username.lower() -> user_id
 MAX_CACHE_SIZE = 1500
 
 def update_message_cache(message):
     if message and message.from_user:
         user = message.from_user
         RECENT_MESSAGE_AUTHORS[message.message_id] = user.id
-        
-        # Username cache'ini de güncelle
         if user.username:
             USERNAME_TO_ID_CACHE[user.username.lower()] = user.id
-        
         if len(RECENT_MESSAGE_AUTHORS) > MAX_CACHE_SIZE:
             RECENT_MESSAGE_AUTHORS.popitem(last=False)
 
@@ -79,7 +77,45 @@ async def cache_message_author(update: Update, context: ContextTypes.DEFAULT_TYP
     if update.edited_message:
         update_message_cache(update.edited_message)
 
-# ==================== KONTROL LİSTESİ ====================
+def load_rules_sent():
+    today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
+    if os.path.exists(RULES_SENT_FILE):
+        try:
+            with open(RULES_SENT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("date") == today_str:
+                return set(data.get("sent", []))
+        except Exception as e:
+            print(f"Rules sent dosyası okunamadı: {e}")
+    return set()
+
+def save_rules_sent(sent_indices):
+    today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
+    data = {"date": today_str, "sent": list(sent_indices)}
+    try:
+        with open(RULES_SENT_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"Rules sent dosyası kaydedilemedi: {e}")
+
+async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
+    tz = pytz.timezone("Europe/Istanbul")
+    now = datetime.datetime.now(tz)
+    if not (now.hour >= 8 or now.hour < 1):
+        return
+    sent = load_rules_sent()
+    available = [i for i in range(len(RULES)) if i not in sent]
+    if not available:
+        return
+    idx = random.choice(available)
+    rule_text = RULES[idx]
+    sent.add(idx)
+    save_rules_sent(sent)
+    try:
+        await context.bot.send_photo(chat_id=ALLOWED_GROUP_ID, photo=RULE_IMAGE_URL, caption=rule_text)
+    except Exception as e:
+        print(f"Kural gönderme hatası: {e}")
+
 def load_kontrol_listesi():
     if os.path.exists(KONTROL_FILE):
         try:
@@ -96,7 +132,7 @@ def save_kontrol_listesi(data):
     except Exception as e:
         print(f"Kontrol listesi kaydedilemedi: {e}")
 
-# ==================== İLETİŞİM KONTROL SİSTEMİ (ID ÖNCELİKLİ) ====================
+# ==================== İLETİŞİM KONTROL SİSTEMİ ====================
 
 async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type
@@ -121,12 +157,10 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif entity.type == "mention":
             username_part = text[entity.offset:entity.offset + entity.length].lstrip("@")
             username_lower = username_part.lower()
-
-            # Önce cache'ten ID bulmaya çalış
             found_id = USERNAME_TO_ID_CACHE.get(username_lower)
 
             mentioned.append({
-                "id": found_id,           # Bulduysa ID, bulamazsa None
+                "id": found_id,
                 "name": username_part,
                 "username": username_part
             })
@@ -188,7 +222,6 @@ async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TY
         u1_id = pair["user1"].get("id")
         u2_id = pair["user2"].get("id")
 
-        # Sadece ID varsa kontrol et (daha güvenli)
         if u1_id is None or u2_id is None:
             continue
 
@@ -238,7 +271,7 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 await context.bot.send_message(chat_id=reaction.chat.id, text=warn_text)
 
-            await send_kontrol_bildirim(context, "Emoji Tepki", warn_text, reaction.chat.id)
+            await send_kontrol_bildirim(context, "Emoji Tepki", warn_text, reaction.chat_id)
             break
 
 
@@ -341,7 +374,6 @@ def main():
         allow_reentry=True
     )
 
-    # Cache handler
     app.add_handler(
         MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author),
         group=-2
@@ -356,7 +388,6 @@ def main():
     app.add_handler(PollAnswerHandler(duyuru_poll_answer))
     app.add_handler(MessageHandler(filters.Chat(chat_id=-1003613910089) & filters.UpdateType.CHANNEL_POST, copy_channel_post))
 
-    # Kontrol sistemi
     app.add_handler(CommandHandler("kontrolet", kontrolet))
     app.add_handler(CommandHandler("kontrolliste", kontrolliste))
     app.add_handler(CommandHandler("kontrolsil", kontrolsil))
