@@ -333,11 +333,24 @@ async def filtreliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def filtrekisiekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
-    if len(context.args) < 2:
-        await update.message.reply_text("Kullanım: /filtrekisiekle kelime @kisi (veya ID)")
-        return
     
-    kelime = context.args[0].lower()
+    kelime = None
+    target_user = None
+    
+    # Öncelik: Reply varsa replied kullanıcıyı al (kullanıcı adı olmayanlar için en kolay yöntem)
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target_user = update.message.reply_to_message.from_user
+        if context.args:
+            kelime = context.args[0].lower()
+        else:
+            await update.message.reply_text("Kullanım (reply ile): /filtrekisiekle kelime")
+            return
+    else:
+        if len(context.args) < 2:
+            await update.message.reply_text("Kullanım: /filtrekisiekle kelime @kisi (veya ID)\nVeya bir mesaja reply atıp /filtrekisiekle kelime yazabilirsin.")
+            return
+        kelime = context.args[0].lower()
+    
     data = load_json(FILTRE_FILE, {})
     
     if kelime not in data:
@@ -353,7 +366,13 @@ async def filtrekisiekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        u = await userbot.get_users(context.args[1])
+        if target_user:
+            # Reply'den geldi → direkt ID kullan
+            u = target_user
+        else:
+            # Argüman olarak verildi (@username veya numeric ID)
+            u = await userbot.get_users(context.args[1])
+        
         display = u.first_name or ""
         if u.last_name:
             display += " " + u.last_name
@@ -367,7 +386,7 @@ async def filtrekisiekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         data[kelime].append({"id": u.id, "display_name": display.strip() or str(u.id)})
         save_json(FILTRE_FILE, data)
-        await update.message.reply_text(f"✅ {display.strip()} başarıyla '{kelime}' filtresine eklendi.")
+        await update.message.reply_text(f"✅ {display.strip()} başarıyla '{kelime}' filtresine eklendi. (ID: {u.id})")
     except Exception as e:
         await update.message.reply_text(f"❌ Kullanıcı çözümlenemedi: {e}")
 
@@ -523,14 +542,32 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
     
-    if len(context.args) < 2 or not userbot:
-        await update.message.reply_text("Kullanım: /kontrolet @kisi1 @kisi2")
-        return
+    u1 = None
+    u2 = None
+    
+    # Reply desteği: Bir mesaja reply atılırsa, replied kullanıcı ikinci kişi olur (kullanıcı adı olmayanlar için)
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        if len(context.args) < 1:
+            await update.message.reply_text("Kullanım (reply ile): /kontrolet @kisi1")
+            return
+        try:
+            u1 = await userbot.get_users(context.args[0])
+            u2 = update.message.reply_to_message.from_user
+        except Exception as e:
+            await update.message.reply_text(f"İlk kullanıcı çözümlenemedi: {e}")
+            return
+    else:
+        if len(context.args) < 2 or not userbot:
+            await update.message.reply_text("Kullanım: /kontrolet @kisi1 @kisi2\nVeya bir mesaja reply atıp /kontrolet @kisi1 yazabilirsin.")
+            return
+        try:
+            u1 = await userbot.get_users(context.args[0])
+            u2 = await userbot.get_users(context.args[1])
+        except Exception as e:
+            await update.message.reply_text(f"Kullanıcılar çözümlenemedi: {e}")
+            return
     
     try:
-        u1 = await userbot.get_users(context.args[0])
-        u2 = await userbot.get_users(context.args[1])
-        
         data = load_kontrol_listesi()
         if get_violation_pair(u1.id, u2.id):
             await update.message.reply_text("Bu iki kullanıcı zaten listede.")
@@ -548,7 +585,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Liste güncellendi. {get_user_mention(u1)} ↔ {get_user_mention(u2)} artık birbirleriyle muhatap olamazlar.")
         await log_to_admin(context, f"✅ <b>Yeni İletişim Yasağı (Yönetici komutu ile):</b>\n{get_user_mention(u1)} ↔ {get_user_mention(u2)}")
     except Exception as e:
-        await update.message.reply_text(f"Kullanıcılar bulunamadı veya hata: {e}")
+        await update.message.reply_text(f"Hata: {e}")
 
 async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_kontrol_listesi()
@@ -661,7 +698,7 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     user_id = str(update.message.from_user.id)
-    dynamic_instruction = "Kullanıcının sorusunu maksimum 80 kelime ile cevapla. Samimi ol. kalın metin kullanma 2 paragraf halinde yaz"
+    dynamic_instruction = "Kullanıcının sorusunu maksimum 100 kelime ile cevapla. Samimi ol."
     if user_id == "8639720888":
         dynamic_instruction += " Kullanıcıya 'ablam' diye hitap et."
     
