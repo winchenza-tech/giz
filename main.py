@@ -4,11 +4,7 @@ import datetime
 import pytz
 import asyncio
 import json
-import io
-import matplotlib
-matplotlib.use('Agg')  # Sunucuda hata vermeden arka planda grafik çizmek için
-import matplotlib.pyplot as plt
-
+import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -22,7 +18,6 @@ from google.genai import types
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ALLOWED_GROUP_ID = os.getenv("ALLOWED_GROUP_ID")
-
 if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
     raise ValueError("Lütfen Railway Variables kısmına TELEGRAM_TOKEN, GEMINI_API_KEY ve ALLOWED_GROUP_ID ekleyin.")
 
@@ -30,39 +25,123 @@ if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
 IMAGE_URL_1 = "https://i.ibb.co/S4yWQrHg/MG-0345.jpg"
 IMAGE_URL_2 = "https://i.ibb.co/Y748qgsP/MG-0346.jpg"
 SORU_IMAGE_URL = "https://i.ibb.co/5Xcrbv87/MG-0398.jpg"
+RULE_IMAGE_URL = "https://i.ibb.co/r2s2dYhb/MG-0987.png"
 
 # Kullanılacak Gemini Modeli
 GEMINI_MODEL = "gemini-2.5-flash"
-
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 WAITING_FOR_TIME = 1
 WAITING_FOR_IMPORTANCE = 2
-STATS_FILE = "stats.json"
 
 # Duyuru yapabilecek kullanıcı ID'leri
-ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780","8150494686","8242824985"]
+ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780", "8150494686", "8242824985"]
 
 # Duyuru hedef grup ID'si
 DUYURU_GROUP_ID = "-1003297262036"
 
+# Kurallar (Rastgele gönderim için)
+RULES = [
+    """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.
+“İnsanın mahremiyeti, özgürlüğünün temelidir.” — John Stuart Mill""",
 
-def load_stats():
-    if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    """📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.
+“Kaba söz, zayıf düşüncenin sesidir.” — Arthur Schopenhauer""",
+
+    """📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.
+“Sessizlik, tartışmayı bitirmenin en zarif yoludur.” — Friedrich Nietzsche""",
+
+    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.
+"Yabancıya karşı saygı, kişinin kendi evine duyduğu saygının bir aynasıdır." — Stefan Zweig""",
+
+    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.
+“Sessizlik kötülüğün en sadık müttefikidir” — Paulo Freire""",
+
+    """📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.
+“İftira, ahlaksızlığın en sinsi biçimidir.” — Jean-Jacques Rousseau""",
+
+    """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.
+“Şiddeti savunan, aklı terk etmiştir.” — Albert Camus""",
+
+    """📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.
+“İnsanı bozan şey özgürlük değil, ölçüsüzlüktür.” — Montesquieu""",
+
+    """📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.
+“Zevk, tekrarlandıkça değil, tazeyken değerlidir; geciken tat damakta kalmaz.” — Montaigne""",
+
+    """📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.
+“Misafirlik davetle olur.” — Türk atasözü""",
+
+    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.
+“Her topluluk, saygı ve sınır bilinciyle ayakta kalır.” — Alexis de Tocqueville""",
+]
+
+RULES_SENT_FILE = "rules_sent.json"
 
 
-def save_stats(stats):
-    with open(STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(stats, f)
+def load_rules_sent():
+    """Bugünün gönderilen kural indekslerini yükler. Gün değiştiyse sıfırlar."""
+    today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
+    if os.path.exists(RULES_SENT_FILE):
+        try:
+            with open(RULES_SENT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("date") == today_str:
+                return set(data.get("sent", []))
+        except Exception as e:
+            print(f"Rules sent dosyası okunamadı: {e}")
+    return set()
+
+
+def save_rules_sent(sent_indices):
+    """Bugünün gönderilen kural indekslerini kaydeder."""
+    today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
+    data = {
+        "date": today_str,
+        "sent": list(sent_indices)
+    }
+    try:
+        with open(RULES_SENT_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"Rules sent dosyası kaydedilemedi: {e}")
+
+
+async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
+    """Sabah 08:00 - Gece 01:00 arası her 155 dakikada bir rastgele kural + görsel gönderir.
+    Aynı gün aynı kuralı tekrar göndermez."""
+    tz = pytz.timezone("Europe/Istanbul")
+    now = datetime.datetime.now(tz)
+
+    # Sadece 08:00 - 00:59 (gece 1'e kadar) arasında çalışsın
+    if not (now.hour >= 8 or now.hour < 1):
+        return
+
+    sent = load_rules_sent()
+    available = [i for i in range(len(RULES)) if i not in sent]
+
+    if not available:
+        return  # Bugün tüm kurallar gönderilmiş, tekrar etme
+
+    idx = random.choice(available)
+    rule_text = RULES[idx]
+    sent.add(idx)
+    save_rules_sent(sent)
+
+    try:
+        await context.bot.send_photo(
+            chat_id=ALLOWED_GROUP_ID,
+            photo=RULE_IMAGE_URL,
+            caption=rule_text
+        )
+        print(f"Random kural #{idx} gruba gönderildi.")
+    except Exception as e:
+        print(f"Kural gönderme hatası: {e}")
 
 
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return
-
     guide = (
         "Es Justo Grup İçinde:\n"
         "/soru [metin] - Yapay zekaya kısa bir soru sorar.\n\n"
@@ -74,9 +153,7 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/yardim veya /start - Bu kılavuzu tekrar gösterir.\n\n"
         "Bu botun bildirim sesini normal mesaj bildirim sesinden farklı yapmanız önerilir."
     )
-
     await update.message.reply_text(guide)
-
     try:
         await context.bot.send_photo(chat_id=update.message.chat_id, photo=IMAGE_URL_1, caption="BİLDİRİM SESLERİNİ DEĞİŞTİRME\nAdım 1: Bildirim Menüsü")
         await context.bot.send_photo(chat_id=update.message.chat_id, photo=IMAGE_URL_2, caption="Adım 2: Özel Ses Seçimi")
@@ -96,263 +173,19 @@ async def copy_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Kanal mesajı kopyalama hatası: {e}")
 
 
-async def score_bot_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Message Score Bot'un mesajını okuyup grafikli profesyonel rapor gönderir ve mesajını siler."""
-    tz = pytz.timezone("Europe/Istanbul")
-    now = datetime.datetime.now(tz)
-
-    # 00:00 ile 00:30 arasında çalışsın
-    if not (now.hour == 0 and 0 <= now.minute <= 30):
-        return
-
-    text = update.message.text or update.message.caption
-    if not text:
-        return
-
-    # İstatistikleri Gemini'ye çektiriyoruz
-    extract_prompt = f"Aşağıdaki mesaj istatistiği metninden 'toplam mesaj sayısını' ve 'kullanıcı (çeşitliliği) sayısını' bul. Sadece şu formatta geçerli bir JSON döndür: {{\"msg_count\": 100, \"user_count\": 10}}. Metin: {text}"
-
-    try:
-        response = await gemini_client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=extract_prompt
-        )
-        json_str = response.text.strip().strip('`').replace('json\n', '')
-        data = json.loads(json_str)
-        msg_count = data.get("msg_count", 0)
-        user_count = data.get("user_count", 0)
-    except Exception as e:
-        print(f"Veri çekilemedi: {e}")
-        return
-
-    today_str = now.strftime("%Y-%m-%d")
-    yesterday_str = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    last_week_str = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
-
-    stats = load_stats()
-    stats[today_str] = {"msg_count": msg_count, "user_count": user_count}
-    save_stats(stats)
-
-    labels = ['Geçen Hafta', 'Dün', 'Bugün']
-    m_counts = [stats.get(last_week_str, {}).get("msg_count", 0), stats.get(yesterday_str, {}).get("msg_count", 0), msg_count]
-    u_counts = [stats.get(last_week_str, {}).get("user_count", 0), stats.get(yesterday_str, {}).get("user_count", 0), user_count]
-    
-    # Kişi başı ortalama mesajları hesapla
-    avg_counts = [round(m / u) if u > 0 else 0 for m, u in zip(m_counts, u_counts)]
-
-    # Grafiği Çiziyoruz
-    fig, ax1 = plt.subplots(figsize=(9, 6))
-    x = range(len(labels))
-    width = 0.25  # 3 sütun olacağı için genişliği biraz daha daralttık
-
-    # İkinci Y eksenini oluşturuyoruz (TwinX)
-    ax2 = ax1.twinx()
-
-    # Çubukları oluşturuyoruz
-    bars1 = ax1.bar([i - width for i in x], m_counts, width, label='Toplam Mesaj', color='#2C3E50')
-    bars2 = ax2.bar([i for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
-    bars3 = ax2.bar([i + width for i in x], avg_counts, width, label='Ortalama (Kişi Başı)', color='#F1C40F') # Sarı Renk
-
-    # Eksen İsimlendirmeleri
-    ax1.set_ylabel('Toplam Mesaj Sayısı (Sol Eksen)', fontsize=11, fontweight='bold', color='#2C3E50')
-    ax2.set_ylabel('Katılımcı & Ortalama (Sağ Eksen)', fontsize=11, fontweight='bold')
-    ax1.set_title('Grup Günlük Etkileşim Raporu', fontsize=14, fontweight='bold')
-    
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(labels, fontsize=11)
-    
-    # DİNAMİK Y EKSENLERİ (TwinX ile Ayrıştırılmış)
-    max_m = max(m_counts) if m_counts else 10
-    ax1.set_ylim(0, max_m + (max_m * 0.15)) # Sol taraf sadece mesajlara odaklı
-    
-    max_u_avg = max(max(u_counts), max(avg_counts)) if (u_counts or avg_counts) else 10
-    ax2.set_ylim(0, max(75, max_u_avg) + 10) # Sağ taraf katılımcı ve ortalamaya odaklı (Max 70 standardına uygun)
-
-    ax1.grid(axis='y', alpha=0.2, linestyle='--')
-
-    # Değerleri sütunların üzerine yazma
-    for bar in bars1:
-        height = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width()/2., height + (max_m * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
-    for bar in bars2:
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
-    for bar in bars3:
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
-
-    # Efsanevi tabloyu (Legend) birleştirme
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
-    buf.seek(0)
-    plt.close(fig)
-
-    # Profesyonel raporlama promptu — espri veya ucuz motivasyon yok
-    report_prompt = (
-        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. Kişi başı ortalama {avg_counts[2]} mesaj düştü. "
-        f"Dün {m_counts[1]} mesaj, {u_counts[1]} kişi; geçen hafta aynı gün {m_counts[0]} mesaj, {u_counts[0]} kişi vardı. "
-        f"Bu verileri değerlendirerek gruba özel, profesyonel, analitik ve ciddi bir üslupla en fazla 100 kelimelik "
-        f"bir günlük değerlendirme raporu yaz. Espri, argo, samimi ifadeler, emoji veya ucuz motivasyon cümleleri kullanma. "
-        f"Bir iş ortamına uygun, nesnel ve yapıcı bir dil kullan."
-    )
-    try:
-        report_response = await gemini_client.aio.models.generate_content(model=GEMINI_MODEL, contents=report_prompt)
-        report_text = report_response.text
-    except:
-        report_text = "Günlük grup etkileşim raporu ektedir."
-
-    # Raporu diğer gruba gönder
-    try:
-        await context.bot.send_photo(
-            chat_id="-5199865415",
-            photo=buf.getvalue(), 
-            caption=report_text
-        )
-    except Exception as e:
-        print(f"Rapor gönderilirken hata oluştu: {e}")
-
-    # İşlem tamamlandığında asıl rapor mesajını sil
-    try:
-        await update.message.delete()
-        print("Rapor başarıyla gönderildi ve 5933486341 ID'li orijinal mesaj silindi.")
-    except Exception as e:
-        print(f"Orijinal mesaj silinemedi: {e}")
-
-
-async def test_rapor_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/dene komutu ile botun özel mesajından istatistikleri test etmek için."""
-    if update.message.chat.type != "private":
-        return
-
-    text = update.message.text or update.message.caption or ""
-    test_text = re.sub(r'^/dene\s*', '', text, flags=re.IGNORECASE).strip()
-
-    if not test_text:
-        await update.message.reply_text("Test edilecek metni eksik girdin. Örnek: /dene Toplam mesaj: 2308 Toplam aktif kullanıcı: 43")
-        return
-
-    msg = await update.message.reply_text("Test verisi işleniyor, lütfen bekleyin...")
-
-    extract_prompt = f"Aşağıdaki mesaj istatistiği metninden 'toplam mesaj sayısını' ve 'kullanıcı (çeşitliliği) sayısını' bul. Sadece şu formatta geçerli bir JSON döndür: {{\"msg_count\": 100, \"user_count\": 10}}. Metin: {test_text}"
-
-    try:
-        response = await gemini_client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=extract_prompt
-        )
-        json_str = response.text.strip().strip('`').replace('json\n', '')
-        data = json.loads(json_str)
-        msg_count = data.get("msg_count", 0)
-        user_count = data.get("user_count", 0)
-    except Exception as e:
-        await msg.edit_text(f"Veri çıkarılırken hata oluştu: {e}")
-        return
-
-    tz = pytz.timezone("Europe/Istanbul")
-    now = datetime.datetime.now(tz)
-    yesterday_str = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    last_week_str = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
-
-    # Geçmiş veriler için load yap, test olduğu için kaydetme
-    stats = load_stats()
-    
-    labels = ['Geçen Hafta', 'Dün', 'Bugün (TEST)']
-    m_counts = [stats.get(last_week_str, {}).get("msg_count", 0), stats.get(yesterday_str, {}).get("msg_count", 0), msg_count]
-    u_counts = [stats.get(last_week_str, {}).get("user_count", 0), stats.get(yesterday_str, {}).get("user_count", 0), user_count]
-    
-    # Ortalama hesaplama
-    avg_counts = [round(m / u) if u > 0 else 0 for m, u in zip(m_counts, u_counts)]
-
-    fig, ax1 = plt.subplots(figsize=(9, 6))
-    x = range(len(labels))
-    width = 0.25
-
-    ax2 = ax1.twinx()
-
-    bars1 = ax1.bar([i - width for i in x], m_counts, width, label='Toplam Mesaj', color='#2C3E50')
-    bars2 = ax2.bar([i for i in x], u_counts, width, label='Katılımcı Sayısı', color='#3498DB')
-    bars3 = ax2.bar([i + width for i in x], avg_counts, width, label='Ortalama (Kişi Başı)', color='#F1C40F')
-
-    ax1.set_ylabel('Toplam Mesaj Sayısı (Sol Eksen)', fontsize=11, fontweight='bold', color='#2C3E50')
-    ax2.set_ylabel('Katılımcı & Ortalama (Sağ Eksen)', fontsize=11, fontweight='bold')
-    ax1.set_title('Grup Günlük Etkileşim Raporu (TEST)', fontsize=14, fontweight='bold')
-    
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(labels, fontsize=11)
-
-    max_m = max(m_counts) if m_counts else 10
-    ax1.set_ylim(0, max_m + (max_m * 0.15))
-    
-    max_u_avg = max(max(u_counts), max(avg_counts)) if (u_counts or avg_counts) else 10
-    ax2.set_ylim(0, max(75, max_u_avg) + 10)
-
-    ax1.grid(axis='y', alpha=0.2, linestyle='--')
-
-    for bar in bars1:
-        height = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width()/2., height + (max_m * 0.02), str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
-    for bar in bars2:
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
-    for bar in bars3:
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height + 1, str(int(height)), ha='center', va='bottom', fontsize=9, fontweight='bold')
-
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
-    buf.seek(0)
-    plt.close(fig)
-
-    report_prompt = (
-        f"Bugün grupta {msg_count} mesaj gönderildi ve {user_count} kişi katılım sağladı. Kişi başı ortalama {avg_counts[2]} mesaj düştü. "
-        f"Dün {m_counts[1]} mesaj, {u_counts[1]} kişi; geçen hafta aynı gün {m_counts[0]} mesaj, {u_counts[0]} kişi vardı. "
-        f"Bu verileri değerlendirerek gruba özel, profesyonel, analitik ve ciddi bir üslupla en fazla 100 kelimelik "
-        f"bir günlük değerlendirme raporu yaz. Espri, argo, samimi ifadeler, emoji veya ucuz motivasyon cümleleri kullanma. "
-        f"Bir iş ortamına uygun, nesnel ve yapıcı bir dil kullan.kalın yazmaya çalışma tüm metinler aynı fontta olsun"
-    )
-    
-    try:
-        report_response = await gemini_client.aio.models.generate_content(model=GEMINI_MODEL, contents=report_prompt)
-        report_text = report_response.text
-    except:
-        report_text = "Günlük grup etkileşim raporu ektedir."
-
-    try:
-        await msg.delete()
-        await context.bot.send_photo(
-            chat_id=update.message.chat_id,
-            photo=buf.getvalue(), 
-            caption=f"🧪 **TEST RAPORU:**\n\n{report_text}"
-        )
-    except Exception as e:
-        await context.bot.send_message(chat_id=update.message.chat_id, text=f"Test sırasında hata oluştu: {e}")
-
-
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == "private":
         return
-
     if str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
 
-    # Soru metni belirleme (Doğrudan mesaj veya caption)
     text = update.message.text or update.message.caption or ""
     question_text = re.sub(r'(?i)^/soru\s*', '', text).strip()
 
-    # Eğer metin yoksa alıntılanan mesajdaki metne bak
     if not question_text and update.message.reply_to_message:
         reply_text = update.message.reply_to_message.text or update.message.reply_to_message.caption or ""
         question_text = reply_text.strip()
 
-    # Görsel kontrolü (Mesajın kendisinde veya alıntılanan mesajda)
     photo_obj = None
     if update.message.photo:
         photo_obj = update.message.photo[-1]
@@ -372,7 +205,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Dinamik Samimi Üslup Ayarı
     user_id = str(update.message.from_user.id)
     dynamic_instruction = (
         "Kullanıcının sorusunu maksimum 100 kelime olacak şekilde yanıtla. "
@@ -381,10 +213,8 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Genel olarak ansiklopedik, kaba veya robotik konuşma, samimi ve günlük bir dil kullan. "
         "Uzun cevaplarda paragrafa ayırabilirsin. "
     )
-
     if image_data:
         dynamic_instruction += "Kullanıcı bir görsel gönderdi. Görseli dikkatlice incele ve soruyu görselin içeriğine göre yanıtla. Görselde ne gördüğünü açıklamayı unutma. "
-
     if user_id == "8639720888":
         dynamic_instruction += "Lütfen kullanıcıya 'ablam' diye hitap et. Çok saygılı, kız kardeşi gibi sıcak, ablamlı bir dil kullan. "
     elif question_text.endswith("?"):
@@ -416,7 +246,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 temperature=0.7,
             )
         )
-
         animation_task.cancel()
         try:
             await status_msg.delete()
@@ -432,7 +261,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(clean_response)
         else:
             await update.message.reply_text("Bu saçma soruyu cevaplayamam.")
-
     except Exception as e:
         animation_task.cancel()
         try:
@@ -440,16 +268,14 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
         print(f"Gemini Hatası: {e}")
-        await update.message.reply_text("Cevap üretilirken bir hata olutu.")
+        await update.message.reply_text("Cevap üretilirken bir hata oluştu.")
 
 
 # ──────────────────────────────── Duyuru Sistemi ────────────────────────────────
-
 async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Özel mesajda /duyuru komutunu işler. Yetkili kullanıcılara anket gönderir."""
+    """Özel mesajda /duyuru komutunu işler."""
     if update.message.chat.type != "private":
         return
-
     user_id = str(update.message.from_user.id)
     if user_id not in ALLOWED_DUYURU_USERS:
         await update.message.reply_text("Bu komutu kullanma yetkiniz bulunmuyor.")
@@ -462,17 +288,14 @@ async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Duyuru metnini yazmalısın. Örnek: /duyuru Yarın saat 14:00'te Zenithar'a ibadet var.")
         return
 
-    # Duyuru metnini sakla
     context.user_data["duyuru_text"] = duyuru_text
 
-    # Anket gönder
     message = await update.message.reply_poll(
         question="Duyuru nasıl paylaşılsın?",
         options=["📢 Bildirimli Sabitle", "📌 Bildirimsiz Sabitle"],
         is_anonymous=False,
     )
 
-    # Anket bilgilerini bot_data'ya kaydet (PollAnswerHandler'dan erişmek için)
     context.bot_data[f"duyuru_poll_{message.poll.id}"] = {
         "chat_id": update.message.chat_id,
         "user_id": user_id,
@@ -481,10 +304,9 @@ async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Anket cevabını işler ve duyuruyu gruba gönderir."""
+    """Anket cevabını işler ve duyuruyu gruba gönderir. (Sadece kullanıcının yazdığı metin kullanılır, ön ek yok)"""
     poll_answer = update.poll_answer
     poll_id = poll_answer.poll_id
-
     poll_data = context.bot_data.get(f"duyuru_poll_{poll_id}")
     if not poll_data:
         return
@@ -493,7 +315,7 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not option_ids:
         return
 
-    selected = option_ids[0]  # 0 = Bildirimli, 1 = Bildirimsiz
+    selected = option_ids[0]
     duyuru_text = poll_data["duyuru_text"]
 
     try:
@@ -501,38 +323,34 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Bildirimli
             msg = await context.bot.send_message(
                 chat_id=DUYURU_GROUP_ID,
-                text=f"📢{duyuru_text}",
+                text=duyuru_text,
                 disable_notification=False,
             )
         else:
             # Bildirimsiz
             msg = await context.bot.send_message(
                 chat_id=DUYURU_GROUP_ID,
-                text=f"📢 {duyuru_text}",
+                text=duyuru_text,
                 disable_notification=True,
             )
 
-        # Mesajı sabitle
         await msg.pin(disable_notification=True)
 
-        # Yetkiliye bilgi ver
         await context.bot.send_message(
             chat_id=poll_data["chat_id"],
-            text="✅ Duyuru gruba gönderildi. Aferin"
+            text="✅ Duyuru gruba gönderildi ve sabitlendi."
         )
     except Exception as e:
         print(f"Duyuru gönderme hatası: {e}")
         await context.bot.send_message(
             chat_id=poll_data["chat_id"],
-            text="❌ Duyuru gönderilirken bir hata olutu. ."
+            text="❌ Duyuru gönderilirken bir hata oluştu."
         )
 
-    # Temizlik
     del context.bot_data[f"duyuru_poll_{poll_id}"]
 
 
 # ──────────────────────────────── Hatırlatıcı Sistemi ────────────────────────────────
-
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return ConversationHandler.END
@@ -554,7 +372,6 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     possible_time = args[-1]
-
     if re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", possible_time):
         time_text = possible_time
         reminder_text = " ".join(args[:-1])
@@ -577,7 +394,7 @@ async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_text = update.message.text.strip()
     if not re.match(r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", time_text):
-        await update.message.reply_text("Hatalı format. Bunu çocuk bile becerebilir de neyse saati 15:40 formatında gir:")
+        await update.message.reply_text("Hatalı format. Saati 15:40 formatında gir:")
         return WAITING_FOR_TIME
     context.user_data["reminder_time"] = time_text
     keyboard = [[InlineKeyboardButton("Çok Önemli", callback_data="imp_high")], [InlineKeyboardButton("Normal", callback_data="imp_normal")]]
@@ -594,19 +411,23 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     time_text = context.user_data.get("reminder_time")
     chat_id = query.message.chat_id
     final_reminder_text = f"{reminder_text} ({time_text})"
+
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.datetime.now(tz)
     hour, minute = map(int, time_text.split(":"))
     target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target_time < now:
         target_time += datetime.timedelta(days=1)
+
     delay_seconds = (target_time - now).total_seconds()
     job_data = {"chat_id": chat_id, "text": final_reminder_text, "count": 0}
     job_id = f"rem_{chat_id}_{target_time.timestamp()}"
+
     if importance == "high":
         context.job_queue.run_repeating(send_high_importance_alert, interval=120, first=delay_seconds, data=job_data, name=f"high_loop_{job_id}")
     else:
         context.job_queue.run_repeating(send_normal_importance_alert, interval=300, first=delay_seconds, data=job_data, name=f"normal_loop_{job_id}")
+
     await query.edit_message_text(f"Hatırlatıcı kuruldu! Saat {time_text} geldiğinde bildirim alacaksın.")
     return ConversationHandler.END
 
@@ -663,22 +484,16 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ──────────────────────────────── Anti Spam (OctopusGame_Bot) ────────────────────────────────
-
+# ──────────────────────────────── Anti Spam ────────────────────────────────
 async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Octopusgame_bot'un reklam ve davet linklerini doğrudan engeller."""
     if not update.message:
         return
-        
     user = update.message.from_user
     if not user or not user.username:
         return
-        
     if user.username.lower() == "octopusgame_bot":
         text = update.message.text or update.message.caption or ""
-        # Türkçe karakter uyumlu (ı/i), boşlukları tolere eden sağlam bir regex
         spam_pattern = r'(?i)(t\.me/?|telegram\.me/?|aram[ıi]za|kat[ıi]l|grubumuza)'
-        
         if re.search(spam_pattern, text):
             try:
                 await update.message.delete()
@@ -700,33 +515,34 @@ def main():
         allow_reentry=True
     )
 
-    # SPAM KONTROLÜ (En yüksek öncelik ile bağımsız çalışması için group=-1 veriyoruz)
+    # SPAM KONTROLÜ (En yüksek öncelik)
     app.add_handler(MessageHandler(filters.ALL, anti_spam_octopus), group=-1)
 
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
     app.add_handler(CommandHandler("iptal", cancel_all))
-    
-    # Soru Komutu: Artık CommandHandler yerine Regex kullanarak hem salt metin hem de fotoğraflı açıklamaları yakalıyoruz
+
+    # Soru Komutu
     app.add_handler(MessageHandler(filters.Regex(r'(?i)^/soru'), soru))
-    
-    # Test Komutu (Özel mesajda)
-    app.add_handler(CommandHandler("dene", test_rapor_command))
 
     # Duyuru komutu (sadece özel mesajda)
     app.add_handler(CommandHandler("duyuru", duyuru_start))
-
-    # Duyuru anket cevabı dinleyicisi
     app.add_handler(PollAnswerHandler(duyuru_poll_answer))
 
-    # Kanal dinleyicisi (Otomatik mesaj kopyalama)
+    # Kanal dinleyicisi
     app.add_handler(MessageHandler(filters.Chat(chat_id=-1003613910089) & filters.UpdateType.CHANNEL_POST, copy_channel_post))
-
-    # Message Score Bot Dinleyicisi — 00:00-00:30 arası rapor çıkarır ve mesajı siler
-    app.add_handler(MessageHandler(filters.Chat(chat_id=-1003297262036) & filters.User(user_id=5933486341), score_bot_listener))
 
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
+
+    # --- YENİ: Rastgele Kural Gönderici (her 155 dk, 08:00-01:00 arası) ---
+    if app.job_queue:
+        app.job_queue.run_repeating(
+            post_random_rule,
+            interval=155 * 60,
+            first=60,
+            name="random_rule_poster"
+        )
 
     print("Bot başlatılıyor...")
     app.run_polling()
