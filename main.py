@@ -8,43 +8,38 @@ from collections import OrderedDict
 
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes, ConversationHandler, MessageHandler, filters,
-    PollAnswerHandler, MessageReactionHandler
+    Application, CommandHandler, ContextTypes,
+    MessageHandler, filters, MessageReactionHandler
 )
 
-from telethon import TelegramClient
-from telethon.sessions import StringSession
+from pyrogram import Client
 
 # ==================== ENV & AYARLAR ====================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ALLOWED_GROUP_ID = os.getenv("ALLOWED_GROUP_ID")
 
-USERBOT_API_ID = os.getenv("USERBOT_API_ID")
+USERBOT_API_ID = int(os.getenv("USERBOT_API_ID", 0))
 USERBOT_API_HASH = os.getenv("USERBOT_API_HASH")
 USERBOT_SESSION_STRING = os.getenv("USERBOT_SESSION_STRING")
 
-if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ALLOWED_GROUP_ID]):
-    raise ValueError("TELEGRAM_TOKEN, GEMINI_API_KEY ve ALLOWED_GROUP_ID zorunlu!")
-
-# Userbot client (sadece geçerli session varsa oluştur)
+# Pyrogram Userbot
 userbot_client = None
 if USERBOT_API_ID and USERBOT_API_HASH and USERBOT_SESSION_STRING:
     try:
-        userbot_client = TelegramClient(
-            StringSession(USERBOT_SESSION_STRING),
-            int(USERBOT_API_ID),
-            USERBOT_API_HASH
+        userbot_client = Client(
+            "userbot",
+            api_id=USERBOT_API_ID,
+            api_hash=USERBOT_API_HASH,
+            session_string=USERBOT_SESSION_STRING,
+            in_memory=True
         )
-        print("Userbot client oluşturuldu.")
+        print("Pyrogram userbot client oluşturuldu.")
     except Exception as e:
-        print(f"Userbot oluşturulamadı (session hatası): {e}")
+        print(f"Pyrogram client oluşturma hatası: {e}")
         userbot_client = None
 
-ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780", "8150494686", "8242824985"]
-ALLOWED_KONTROL_USERS = ALLOWED_DUYURU_USERS
 KONTROL_BILDIRIM_GROUP_ID = -5199864315
+ALLOWED_KONTROL_USERS = ["6781642262", "8639720888", "7094870780", "8150494686", "8242824985"]
 
 RULES = [
     "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.",
@@ -66,7 +61,6 @@ KONTROL_FILE = "kontrol_listesi.json"
 RECENT_MESSAGE_AUTHORS = OrderedDict()
 USERNAME_TO_ID_CACHE = {}
 MAX_CACHE_SIZE = 1500
-PENDING_MUHATAP_POLL = {}
 
 def update_message_cache(message):
     if message and message.from_user:
@@ -138,17 +132,17 @@ def save_kontrol_listesi(data):
     except Exception as e:
         print(f"Kontrol listesi kaydedilemedi: {e}")
 
-# ==================== USERBOT WARN ====================
+# ==================== PYROGRAM USERBOT İLE WARN ====================
 async def send_warn_via_userbot(target_mention: str, reason: str):
     if not userbot_client:
-        print("Userbot aktif değil, warn gönderilemedi.")
+        print("Userbot aktif değil.")
         return False
     try:
-        if not userbot_client.is_connected():
-            await userbot_client.connect()
+        if not userbot_client.is_connected:
+            await userbot_client.start()
         warn_command = f"/warn {target_mention} {reason}"
         await userbot_client.send_message(int(ALLOWED_GROUP_ID), warn_command)
-        print(f"Userbot ile warn atıldı: {warn_command}")
+        print(f"Userbot ile warn atıldı → {warn_command}")
         return True
     except Exception as e:
         print(f"Userbot warn hatası: {e}")
@@ -157,11 +151,6 @@ async def send_warn_via_userbot(target_mention: str, reason: str):
 # ==================== KONTROL SİSTEMİ ====================
 
 async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_type = update.message.chat.type
-    if chat_type not in ["private", "group", "supergroup"]:
-        return
-    if chat_type != "private" and str(update.message.chat.id) != ALLOWED_GROUP_ID:
-        return
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
 
@@ -178,8 +167,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
         elif entity.type == "mention":
             username_part = text[entity.offset:entity.offset + entity.length].lstrip("@")
-            username_lower = username_part.lower()
-            found_id = USERNAME_TO_ID_CACHE.get(username_lower)
+            found_id = USERNAME_TO_ID_CACHE.get(username_part.lower())
             mentioned.append({
                 "id": found_id,
                 "name": username_part,
@@ -187,7 +175,7 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
 
     if len(mentioned) < 2:
-        await update.message.reply_text("İki üyeyi etiketle işte. Örnek: /kontrolet @Tayyip @Özgür")
+        await update.message.reply_text("İki üyeyi etiketle. Örnek: /kontrolet @kisi1 @kisi2")
         return
 
     u1, u2 = mentioned[0], mentioned[1]
@@ -205,17 +193,17 @@ async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     data = load_kontrol_listesi()
     if not data.get("pairs"):
-        await update.message.reply_text("İletişim kontrol listesi boş.")
+        await update.message.reply_text("Liste boş.")
         return
-    lines = [f"{p['pair_id']}- {p['user1']['name']} ve {p['user2']['name']}" for p in data["pairs"]]
-    await update.message.reply_text("📋 Muhatap olmayanlar Listesi:\n\n" + "\n".join(lines), parse_mode="Markdown")
+    lines = [f"#{p['pair_id']} → {p['user1']['name']} × {p['user2']['name']}" for p in data["pairs"]]
+    await update.message.reply_text("\n".join(lines))
 
 
 async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Kullanım: /kontrolsil 2")
+        await update.message.reply_text("Kullanım: /kontrolsil 5")
         return
     pid = int(context.args[0])
     data = load_kontrol_listesi()
@@ -238,23 +226,15 @@ async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     data = load_kontrol_listesi()
-
     for pair in data.get("pairs", []):
         u1_id = pair["user1"].get("id")
         u2_id = pair["user2"].get("id")
-
         if u1_id is None or u2_id is None:
             continue
-
         if (sender.id == u1_id and replied.id == u2_id) or (sender.id == u2_id and replied.id == u1_id):
             mention = get_user_mention(sender)
-            reason = "İletişim yasağı ihlali (Reply)"
-            
-            # Userbot ile warn at
-            await send_warn_via_userbot(mention, reason)
-            
-            # Bildirim grubuna bilgi
-            await send_kontrol_bildirim(context, "Reply", f"/warn {mention} {reason}", update.message.chat_id)
+            await send_warn_via_userbot(mention, "İletişim yasağı ihlali (Reply)")
+            await send_kontrol_bildirim(context, "Reply", mention)
             break
 
 
@@ -264,36 +244,28 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     reactor = reaction.user
-    if not reactor:
-        return
-
     original_author_id = RECENT_MESSAGE_AUTHORS.get(reaction.message_id)
-    if not original_author_id:
+    if not reactor or not original_author_id:
         return
 
     data = load_kontrol_listesi()
-
     for pair in data.get("pairs", []):
         u1_id = pair["user1"].get("id")
         u2_id = pair["user2"].get("id")
-
         if u1_id is None or u2_id is None:
             continue
-
         if (reactor.id == u1_id and original_author_id == u2_id) or (reactor.id == u2_id and original_author_id == u1_id):
             mention = get_user_mention(reactor)
-            reason = "İletişim yasağı ihlali (Emoji Tepki)"
-            
-            await send_warn_via_userbot(mention, reason)
-            await send_kontrol_bildirim(context, "Emoji Tepki", f"/warn {mention} {reason}", reaction.chat.id)
+            await send_warn_via_userbot(mention, "İletişim yasağı ihlali (Emoji)")
+            await send_kontrol_bildirim(context, "Emoji", mention)
             break
 
 
-async def send_kontrol_bildirim(context, ihlal_tipi, warn_text, chat_id):
+async def send_kontrol_bildirim(context, ihlal_tipi, mention):
     try:
         await context.bot.send_message(
             chat_id=KONTROL_BILDIRIM_GROUP_ID,
-            text=f"🚨 İletişim Yasağı İhlali ({ihlal_tipi})\n\n{warn_text}\n\nGrup: {chat_id}"
+            text=f"🚨 İletişim Yasağı İhlali ({ihlal_tipi})\nKişi: {mention}"
         )
     except Exception as e:
         print(f"Bildirim hatası: {e}")
@@ -303,35 +275,29 @@ async def start_userbot():
     if userbot_client:
         try:
             await userbot_client.start()
-            print("Userbot başarıyla başlatıldı.")
+            print("Pyrogram Userbot başarıyla başlatıldı.")
         except Exception as e:
             print(f"Userbot başlatılamadı: {e}")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Userbot'u başlat
     if userbot_client:
         asyncio.create_task(start_userbot())
 
-    # Cache
     app.add_handler(
         MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author),
         group=-2
     )
 
-    # Kontrol sistemi
     app.add_handler(CommandHandler("kontrolet", kontrolet))
     app.add_handler(CommandHandler("kontrolliste", kontrolliste))
     app.add_handler(CommandHandler("kontrolsil", kontrolsil))
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol))
     app.add_handler(MessageReactionHandler(kontrol_reaction))
 
-    # Diğer komutlar
-    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("Bot çalışıyor.")))
-
     if app.job_queue:
-        app.job_queue.run_repeating(post_random_rule, interval=155 * 60, first=60, name="random_rule_poster")
+        app.job_queue.run_repeating(post_random_rule, interval=155 * 60, first=60)
 
     print("Bot başlatılıyor...")
     app.run_polling()
