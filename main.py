@@ -5,11 +5,12 @@ import pytz
 import asyncio
 import json
 import random
+from collections import OrderedDict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, ConversationHandler, MessageHandler, filters,
-    PollAnswerHandler
+    PollAnswerHandler, MessageReactionHandler
 )
 from google import genai
 from google.genai import types
@@ -37,39 +38,45 @@ WAITING_FOR_IMPORTANCE = 2
 # Duyuru yapabilecek kullanıcı ID'leri
 ALLOWED_DUYURU_USERS = ["6781642262", "8639720888", "7094870780", "8150494686", "8242824985"]
 
+# Kontrol yetkili kullanıcı ID'leri
+ALLOWED_KONTROL_USERS = ALLOWED_DUYURU_USERS
+
 # Duyuru hedef grup ID'si
 DUYURU_GROUP_ID = "-1003297262036"
 
-# Kurallar (Rastgele gönderim için)
+# İletişim yasağı ihlallerinin bildirileceği grup
+KONTROL_BILDIRIM_GROUP_ID = 6781642262
+
+# Kurallar
 RULES = [
     """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.""",
-
     """📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.""",
-
     """📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.""",
-
     """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.""",
-
-    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.""",
-
+    """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @ admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.""",
     """📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.""",
-
     """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebidir.""",
-
     """📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.""",
-
     """📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.""",
-
     """📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.""",
-
-    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.""",
+    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebi dir.""",
 ]
-
 RULES_SENT_FILE = "rules_sent.json"
+KONTROL_FILE = "kontrol_listesi.json"
+
+# Emoji reaction cache
+RECENT_MESSAGE_AUTHORS = OrderedDict()
+MAX_CACHE_SIZE = 2500
+
+
+def update_message_cache(message):
+    if message and message.from_user:
+        RECENT_MESSAGE_AUTHORS[message.message_id] = message.from_user.id
+        if len(RECENT_MESSAGE_AUTHORS) > MAX_CACHE_SIZE:
+            RECENT_MESSAGE_AUTHORS.popitem(last=False)
 
 
 def load_rules_sent():
-    """Bugünün gönderilen kural indekslerini yükler. Gün değiştiyse sıfırlar."""
     today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
     if os.path.exists(RULES_SENT_FILE):
         try:
@@ -83,12 +90,8 @@ def load_rules_sent():
 
 
 def save_rules_sent(sent_indices):
-    """Bugünün gönderilen kural indekslerini kaydeder."""
     today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
-    data = {
-        "date": today_str,
-        "sent": list(sent_indices)
-    }
+    data = {"date": today_str, "sent": list(sent_indices)}
     try:
         with open(RULES_SENT_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -96,27 +99,37 @@ def save_rules_sent(sent_indices):
         print(f"Rules sent dosyası kaydedilemedi: {e}")
 
 
+def load_kontrol_listesi():
+    if os.path.exists(KONTROL_FILE):
+        try:
+            with open(KONTROL_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"pairs": [], "next_pair_id": 1}
+
+
+def save_kontrol_listesi(data):
+    try:
+        with open(KONTROL_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Kontrol listesi kaydedilemedi: {e}")
+
+
 async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
-    """Sabah 08:00 - Gece 01:00 arası her 155 dakikada bir rastgele kural + görsel gönderir.
-    Aynı gün aynı kuralı tekrar göndermez."""
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.datetime.now(tz)
-
-    # Sadece 08:00 - 00:59 (gece 1'e kadar) arasında çalışsın
     if not (now.hour >= 8 or now.hour < 1):
         return
-
     sent = load_rules_sent()
     available = [i for i in range(len(RULES)) if i not in sent]
-
     if not available:
-        return  # Bugün tüm kurallar gönderilmiş, tekrar etme
-
+        return
     idx = random.choice(available)
     rule_text = RULES[idx]
     sent.add(idx)
     save_rules_sent(sent)
-
     try:
         await context.bot.send_photo(
             chat_id=ALLOWED_GROUP_ID,
@@ -128,6 +141,208 @@ async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
         print(f"Kural gönderme hatası: {e}")
 
 
+# ──────────────────────────────── İletişim Kontrol Sistemi (Reply + Emoji + /warn) ────────────────────────────────
+async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_type = update.message.chat.type
+    if chat_type not in ["private", "group", "supergroup"]:
+        return
+    if chat_type != "private" and str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+
+    user_id = str(update.message.from_user.id)
+    if user_id not in ALLOWED_KONTROL_USERS:
+        return
+
+    text = update.message.text or ""
+    mentioned = []
+
+    for entity in (update.message.entities or []):
+        if entity.type == "text_mention":
+            u = entity.user
+            mentioned.append({
+                "id": u.id,
+                "name": u.first_name or u.username or str(u.id),
+                "username": u.username
+            })
+        elif entity.type == "mention":
+            username_part = text[entity.offset:entity.offset + entity.length].lstrip("@")
+            mentioned.append({
+                "id": None,
+                "name": username_part,
+                "username": username_part
+            })
+
+    if len(mentioned) < 2:
+        await update.message.reply_text("İki üyeyi etiketle. Örnek: /kontrolet @ahmet @ayse")
+        return
+
+    u1 = mentioned[0]
+    u2 = mentioned[1]
+
+    data = load_kontrol_listesi()
+    new_pair = {
+        "pair_id": data["next_pair_id"],
+        "user1": u1,
+        "user2": u2
+    }
+    data["pairs"].append(new_pair)
+    data["next_pair_id"] += 1
+    save_kontrol_listesi(data)
+
+    await update.message.reply_text(
+        f"✅ Madem bu ikisi muhatap olmak istemiyor, iyi... iletişim yasağı eklendi\n"
+        f"#{new_pair['pair_id']} → {u1['name']} ↔ {u2['name']}\n"
+        f"Bot gözlerini açtı."
+    )
+
+
+async def kontrolliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_type = update.message.chat.type
+    if chat_type != "private" and str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+
+    user_id = str(update.message.from_user.id)
+    if user_id not in ALLOWED_KONTROL_USERS:
+        return
+
+    data = load_kontrol_listesi()
+    if not data.get("pairs"):
+        await update.message.reply_text("İletişim kontrol listesi şu anda boş.")
+        return
+
+    lines = []
+    for p in data["pairs"]:
+        u1n = p["user1"]["name"]
+        u2n = p["user2"]["name"]
+        lines.append(f"{p['pair_id']}- {u1n} ve {u2n}")
+
+    text = "📋 **İletişim Yasağı Listesi:**\n\n" + "\n".join(lines)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def kontrolsil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_type = update.message.chat.type
+    if chat_type != "private" and str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+
+    user_id = str(update.message.from_user.id)
+    if user_id not in ALLOWED_KONTROL_USERS:
+        return
+
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Kullanım: /kontrolsil 2")
+        return
+
+    pair_id = int(args[0])
+    data = load_kontrol_listesi()
+    original = len(data["pairs"])
+    data["pairs"] = [p for p in data["pairs"] if p["pair_id"] != pair_id]
+
+    if len(data["pairs"]) < original:
+        save_kontrol_listesi(data)
+        await update.message.reply_text(f"✅ #{pair_id} numaralı yasağı listeden kaldırdın.")
+    else:
+        await update.message.reply_text(f"#{pair_id} bulunamadı.")
+
+
+def get_user_mention(user):
+    """Kullanıcıyı mention etmek için @username veya isim döndürür"""
+    if user.username:
+        return f"@{user.username}"
+    return user.first_name or "Kullanıcı"
+
+
+async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reply ile ihlal tespiti + /warn"""
+    if str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+    if not update.message.reply_to_message:
+        return
+
+    sender = update.message.from_user          # İhlal eden
+    replied_user = update.message.reply_to_message.from_user
+
+    if not sender or not replied_user:
+        return
+
+    data = load_kontrol_listesi()
+    for pair in data.get("pairs", []):
+        u1_id = pair["user1"].get("id")
+        u2_id = pair["user2"].get("id")
+        if u1_id is None or u2_id is None:
+            continue
+
+        # İhlal eden = sender
+        if (sender.id == u1_id and replied_user.id == u2_id) or (sender.id == u2_id and replied_user.id == u1_id):
+            mention = get_user_mention(sender)
+            warn_text = f"/warn {mention} İletişim yasağı ihlali (yanıt verildi)"
+
+            # İhlal eden kişinin mesajına reply olarak /warn at
+            try:
+                await update.message.reply_text(warn_text)
+            except:
+                await context.bot.send_message(chat_id=update.message.chat_id, text=warn_text)
+
+            # Yönetim grubuna bildirim
+            await send_kontrol_bildirim(context, "Reply", warn_text, update.message.chat_id)
+            break
+
+
+async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Emoji tepki ile ihlal tespiti + /warn"""
+    reaction = update.message_reaction
+    if not reaction or str(reaction.chat.id) != ALLOWED_GROUP_ID:
+        return
+    if not reaction.new_reaction:
+        return
+
+    reactor = reaction.user  # İhlal eden
+    if not reactor:
+        return
+
+    original_author_id = RECENT_MESSAGE_AUTHORS.get(reaction.message_id)
+    if not original_author_id:
+        return
+
+    data = load_kontrol_listesi()
+    for pair in data.get("pairs", []):
+        u1_id = pair["user1"].get("id")
+        u2_id = pair["user2"].get("id")
+        if u1_id is None or u2_id is None:
+            continue
+
+        if (reactor.id == u1_id and original_author_id == u2_id) or (reactor.id == u2_id and original_author_id == u1_id):
+            mention = get_user_mention(reactor)
+            warn_text = f"/warn {mention} İletişim yasağı ihlali (Emoji Tepki)"
+
+            # Emoji atılan mesajı alıntılayarak /warn at
+            try:
+                await context.bot.send_message(
+                    chat_id=reaction.chat.id,
+                    text=warn_text,
+                    reply_to_message_id=reaction.message_id
+                )
+            except:
+                await context.bot.send_message(chat_id=reaction.chat.id, text=warn_text)
+
+            # Yönetim grubuna bildirim
+            await send_kontrol_bildirim(context, "Emoji Tepki", warn_text, reaction.chat.id)
+            break
+
+
+async def send_kontrol_bildirim(context, ihlal_tipi, warn_text, chat_id):
+    """Yönetim grubuna (6781642262) bildirim gönderir"""
+    try:
+        await context.bot.send_message(
+            chat_id=KONTROL_BILDIRIM_GROUP_ID,
+            text=f"🚨 İletişim Yasağı İhlali ({ihlal_tipi})\n\n{warn_text}\n\nGrup: {chat_id}"
+        )
+    except Exception as e:
+        print(f"Yönetim grubuna bildirim gönderilemedi: {e}")
+
+
+# ──────────────────────────────── Diğer Fonksiyonlar ────────────────────────────────
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return
@@ -151,7 +366,6 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def copy_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Belirli kanaldan gelen mesajları diğer gruba kopyalar."""
     try:
         await context.bot.copy_message(
             chat_id="-5199865415",
@@ -262,7 +476,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ──────────────────────────────── Duyuru Sistemi ────────────────────────────────
 async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Özel mesajda /duyuru komutunu işler."""
     if update.message.chat.type != "private":
         return
     user_id = str(update.message.from_user.id)
@@ -293,7 +506,6 @@ async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Anket cevabını işler ve duyuruyu gruba gönderir. (Sadece kullanıcının yazdığı metin kullanılır, ön ek yok)"""
     poll_answer = update.poll_answer
     poll_id = poll_answer.poll_id
     poll_data = context.bot_data.get(f"duyuru_poll_{poll_id}")
@@ -309,14 +521,12 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     try:
         if selected == 0:
-            # Bildirimli
             msg = await context.bot.send_message(
                 chat_id=DUYURU_GROUP_ID,
                 text=duyuru_text,
                 disable_notification=False,
             )
         else:
-            # Bildirimsiz
             msg = await context.bot.send_message(
                 chat_id=DUYURU_GROUP_ID,
                 text=duyuru_text,
@@ -504,27 +714,48 @@ def main():
         allow_reentry=True
     )
 
-    # SPAM KONTROLÜ (En yüksek öncelik)
+    # Cache handler (emoji için)
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(chat_id=int(ALLOWED_GROUP_ID)),
+            cache_message_author
+        ),
+        group=-2
+    )
+
+    # SPAM KONTROLÜ
     app.add_handler(MessageHandler(filters.ALL, anti_spam_octopus), group=-1)
 
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
     app.add_handler(CommandHandler("iptal", cancel_all))
 
-    # Soru Komutu
     app.add_handler(MessageHandler(filters.Regex(r'(?i)^/soru'), soru))
 
-    # Duyuru komutu (sadece özel mesajda)
     app.add_handler(CommandHandler("duyuru", duyuru_start))
     app.add_handler(PollAnswerHandler(duyuru_poll_answer))
 
-    # Kanal dinleyicisi
     app.add_handler(MessageHandler(filters.Chat(chat_id=-1003613910089) & filters.UpdateType.CHANNEL_POST, copy_channel_post))
+
+    # Kontrol komutları
+    app.add_handler(CommandHandler("kontrolet", kontrolet))
+    app.add_handler(CommandHandler("kontrolliste", kontrolliste))
+    app.add_handler(CommandHandler("kontrolsil", kontrolsil))
+
+    # Reply ihlal + /warn
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY,
+            kontrol_ihlal_kontrol
+        )
+    )
+
+    # Emoji tepki ihlal + /warn
+    app.add_handler(MessageReactionHandler(kontrol_reaction))
 
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
 
-    # --- YENİ: Rastgele Kural Gönderici (her 155 dk, 08:00-01:00 arası) ---
     if app.job_queue:
         app.job_queue.run_repeating(
             post_random_rule,
