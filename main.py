@@ -40,59 +40,46 @@ DUYURU_GROUP_ID = "-1003297262036"
 KONTROL_BILDIRIM_GROUP_ID = 6781642262
 
 RULES = [
-    """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.""",
+    """📌Kişisel verilerin ifşası uyarılmaksızın ban sebebi dir.""",
     """📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.""",
     """📌Tartışma yaşadığınız kişiye sizinle muhatap olmamasını söyledikten sonra chatte ya da seste laf atması ve herhangi bir gönderinizi yanıtlaması ve mesajınıza emoji bırakması yasaktır. İhlali durumunda şikayet gerekmeksizin kuralı ihlal eden kişi yönetici olsa dahi uyarı yapılır.""",
-    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebidir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.""",
+    """📌Gruba yeni katılan üyelerle henüz gerekli samimiyet oluşmadan; isimleri, kullanıcı adları (nick), profil fotoğrafları veya yaşları gibi kişisel unsurlar üzerinden mizah yapılması, rapor edilmesine gerek duyulmaksızın doğrudan uyarı sebebi dir. Bu kural yöneticiler dahil tüm üyeler için istisnasız geçerlidir.""",
     """📌Yöneticilere bildirmek istediğiniz bir mesajı alıntılayarak /Report ya da @admin komutunu yazabilirsiniz. Gereksiz kullananlar uyarılacaktır.""",
     """📌İftira, milli ve kutsal değerlere hakaret yasaktır. Sohbet akışını bozacak şekilde kişisel tartışmaları devam ettirmek yasaktır.""",
     """📌Herhangi bir terör örgütünü, illegal oluşumu vs. övmek uyarılmaksızın ban sebebi dir.""",
     """📌Pornografik ve ileri şiddet içeren görsel içerikler kesinlikle yasaktır.""",
     """📌Çıkmadan önce geçerli bir neden belirtmeksizin gruptan ayrılan üyeler 15 günden önce gruba tekrar dahil olamazlar.""",
     """📌Grup üyesi olmayan yanınızdaki arkadaşlarınızın grup seslisindeki sohbete katılması yasaktır.""",
-    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebidir.""",
+    """📌Başka grubun reklamını yapmak ve reklam olabilecek şekilde başka grupla ilgili konuşmak ban sebebi dir.""",
 ]
 
 RULES_SENT_FILE = "rules_sent.json"
 KONTROL_FILE = "kontrol_listesi.json"
 
-RECENT_MESSAGE_AUTHORS = OrderedDict()
+# ==================== CACHE ====================
+RECENT_MESSAGE_AUTHORS = OrderedDict()          # message_id -> user_id
+USERNAME_TO_ID_CACHE = {}                       # username.lower() -> user_id
 MAX_CACHE_SIZE = 1500
 
 def update_message_cache(message):
     if message and message.from_user:
-        RECENT_MESSAGE_AUTHORS[message.message_id] = message.from_user.id
+        user = message.from_user
+        RECENT_MESSAGE_AUTHORS[message.message_id] = user.id
+        
+        # Username cache'ini de güncelle
+        if user.username:
+            USERNAME_TO_ID_CACHE[user.username.lower()] = user.id
+        
         if len(RECENT_MESSAGE_AUTHORS) > MAX_CACHE_SIZE:
             RECENT_MESSAGE_AUTHORS.popitem(last=False)
 
-# ==================== CACHE FONKSİYONU ====================
 async def cache_message_author(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         update_message_cache(update.message)
     if update.edited_message:
         update_message_cache(update.edited_message)
 
-def load_rules_sent():
-    today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
-    if os.path.exists(RULES_SENT_FILE):
-        try:
-            with open(RULES_SENT_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if data.get("date") == today_str:
-                return set(data.get("sent", []))
-        except Exception as e:
-            print(f"Rules sent dosyası okunamadı: {e}")
-    return set()
-
-def save_rules_sent(sent_indices):
-    today_str = datetime.datetime.now(pytz.timezone("Europe/Istanbul")).strftime("%Y-%m-%d")
-    data = {"date": today_str, "sent": list(sent_indices)}
-    try:
-        with open(RULES_SENT_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except Exception as e:
-        print(f"Rules sent dosyası kaydedilemedi: {e}")
-
+# ==================== KONTROL LİSTESİ ====================
 def load_kontrol_listesi():
     if os.path.exists(KONTROL_FILE):
         try:
@@ -109,25 +96,7 @@ def save_kontrol_listesi(data):
     except Exception as e:
         print(f"Kontrol listesi kaydedilemedi: {e}")
 
-async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
-    tz = pytz.timezone("Europe/Istanbul")
-    now = datetime.datetime.now(tz)
-    if not (now.hour >= 8 or now.hour < 1):
-        return
-    sent = load_rules_sent()
-    available = [i for i in range(len(RULES)) if i not in sent]
-    if not available:
-        return
-    idx = random.choice(available)
-    rule_text = RULES[idx]
-    sent.add(idx)
-    save_rules_sent(sent)
-    try:
-        await context.bot.send_photo(chat_id=ALLOWED_GROUP_ID, photo=RULE_IMAGE_URL, caption=rule_text)
-    except Exception as e:
-        print(f"Kural gönderme hatası: {e}")
-
-# ==================== İLETİŞİM KONTROL SİSTEMİ (DÜZELTİLMİŞ) ====================
+# ==================== İLETİŞİM KONTROL SİSTEMİ (ID ÖNCELİKLİ) ====================
 
 async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type
@@ -151,8 +120,13 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
         elif entity.type == "mention":
             username_part = text[entity.offset:entity.offset + entity.length].lstrip("@")
+            username_lower = username_part.lower()
+
+            # Önce cache'ten ID bulmaya çalış
+            found_id = USERNAME_TO_ID_CACHE.get(username_lower)
+
             mentioned.append({
-                "id": None,
+                "id": found_id,           # Bulduysa ID, bulamazsa None
                 "name": username_part,
                 "username": username_part
             })
@@ -214,24 +188,11 @@ async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TY
         u1_id = pair["user1"].get("id")
         u2_id = pair["user2"].get("id")
 
-        match = False
+        # Sadece ID varsa kontrol et (daha güvenli)
+        if u1_id is None or u2_id is None:
+            continue
 
-        # ID ile kontrol
-        if u1_id and u2_id:
-            if (sender.id == u1_id and replied.id == u2_id) or (sender.id == u2_id and replied.id == u1_id):
-                match = True
-        else:
-            # Username fallback ( @username ile eklenenler için )
-            s_un = (sender.username or "").lower()
-            r_un = (replied.username or "").lower()
-            u1_un = (pair["user1"].get("username") or "").lower()
-            u2_un = (pair["user2"].get("username") or "").lower()
-
-            if u1_un and u2_un:
-                if (s_un == u1_un and r_un == u2_un) or (s_un == u2_un and r_un == u1_un):
-                    match = True
-
-        if match:
+        if (sender.id == u1_id and replied.id == u2_id) or (sender.id == u2_id and replied.id == u1_id):
             mention = get_user_mention(sender)
             warn_text = f"/warn {mention} Hoop iletişim yasağı ihlali (Reply)"
             try:
@@ -262,13 +223,10 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u1_id = pair["user1"].get("id")
         u2_id = pair["user2"].get("id")
 
-        match = False
+        if u1_id is None or u2_id is None:
+            continue
 
-        if u1_id and u2_id:
-            if (reactor.id == u1_id and original_author_id == u2_id) or (reactor.id == u2_id and original_author_id == u1_id):
-                match = True
-
-        if match:
+        if (reactor.id == u1_id and original_author_id == u2_id) or (reactor.id == u2_id and original_author_id == u1_id):
             mention = get_user_mention(reactor)
             warn_text = f"/warn {mention} Hooop iletişim yasağı ihlali (Emoji Tepki)"
             try:
@@ -294,7 +252,7 @@ async def send_kontrol_bildirim(context, ihlal_tipi, warn_text, chat_id):
         print(f"Yönetim grubuna bildirim hatası: {e}")
 
 
-# ==================== DİĞER FONKSİYONLAR (DEĞİŞTİRİLMEDİ) ====================
+# ==================== DİĞER FONKSİYONLAR ====================
 
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -326,22 +284,18 @@ async def copy_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (senin mevcut soru fonksiyonun aynen kalsın)
     pass
 
 
 async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (senin mevcut duyuru fonksiyonun aynen kalsın)
     pass
 
 
 async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (senin mevcut fonksiyonun aynen kalsın)
     pass
 
 
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (senin kodun)
     pass
 
 
@@ -370,7 +324,6 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (senin kodun)
     pass
 
 
@@ -388,7 +341,7 @@ def main():
         allow_reentry=True
     )
 
-    # Cache handler (emoji reaction için)
+    # Cache handler
     app.add_handler(
         MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author),
         group=-2
