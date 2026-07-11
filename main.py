@@ -468,7 +468,7 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mention_text = " ".join(mentions)
                 
                 # Özel durum: kızlarbakinbi filtresi için üstte görsel (banner olarak)
-                if kelime == "kızlarbakinbi":
+                if kelime == "kızlarbakınbi":
                     try:
                         await update.message.reply_photo(
                             photo=IMAGE_URL_KIZLARBAKINBI,
