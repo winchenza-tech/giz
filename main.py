@@ -472,11 +472,11 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
                         await update.message.reply_photo(
                             photo=IMAGE_URL_KIZLARBAKINBI,
-                            caption=f"👀 Kızlar bakın bi!\n\n{mention_text}",
+                            caption=f"\n{mention_text}",
                             parse_mode="HTML"
                         )
                     except Exception as e:
-                        print(f"Kızlarbakinbi görseli gönderilemedi: {e}")
+                        print(f"Kızlarbakinbi görseli gönderilemeditühhh: {e}")
                         await update.message.reply_text(mention_text, parse_mode="HTML")
                 else:
                     try:
