@@ -33,6 +33,7 @@ IMAGE_URL_2 = "https://i.ibb.co/Y748qgsP/MG-0346.jpg"
 SORU_IMAGE_URL = "https://i.ibb.co/5Xcrbv87/MG-0398.jpg"
 RULE_IMAGE_URL = "https://i.ibb.co/r2s2dYhb/MG-0987.png"
 IMAGE_URL_KIZLARBAKINBI = "https://i.ibb.co/V0MdBHPy/MG-1001.jpg"
+IMAGE_URL_ADMIN = "https://i.ibb.co/pBKcW67K/MG-1014.jpg"
 
 GEMINI_MODEL = "gemini-2.5-flash"
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -111,12 +112,20 @@ def save_json(file_path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def init_default_filters():
-    """Bot başlarken kızlarbakinbi filtresini otomatik tanımlar."""
+    """Bot başlarken kızlarbakinbi ve @admin filtrelerini otomatik tanımlar."""
     data = load_json(FILTRE_FILE, {})
+    updated = False
     if "kızlarbakinbi" not in data:
         data["kızlarbakinbi"] = [{"id": "citpitbot", "display_name": "@citpitbot"}]
-        save_json(FILTRE_FILE, data)
+        updated = True
         print("Varsayılan 'kızlarbakinbi' filtresi oluşturuldu.")
+    if "@admin" not in data:
+        data["@admin"] = [{"id": "eskidenyesil", "display_name": "@eskidenyesil"}]
+        updated = True
+        print("Varsayılan '@admin' filtresi oluşturuldu.")
+        
+    if updated:
+        save_json(FILTRE_FILE, data)
 
 async def log_to_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
     """Yönetim log grubuna mesaj gönderir (HTML yapısında, Linkli)."""
@@ -453,7 +462,12 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_json(FILTRE_FILE, {})
     
     for kelime, val in data.items():
-        if re.search(r'\b' + re.escape(kelime) + r'\b', text):
+        if kelime.startswith("@"):
+            match = re.search(r'(?:^|\s)' + re.escape(kelime) + r'(?:\s|$|[.,!?])', text)
+        else:
+            match = re.search(r'\b' + re.escape(kelime) + r'\b', text)
+            
+        if match:
             if isinstance(val, list):
                 # Yeni ID tabanlı format → sağlam mention
                 mentions = []
@@ -467,8 +481,8 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 mention_text = " ".join(mentions)
                 
-                # Özel durum: kızlarbakinbi filtresi için üstte görsel (banner olarak)
-                if kelime == "kızlarbakınbi":
+                # Özel durum: kızlarbakinbi veya @admin
+                if kelime == "kızlarbakınbi" or kelime == "kızlarbakinbi":
                     try:
                         await update.message.reply_photo(
                             photo=IMAGE_URL_KIZLARBAKINBI,
@@ -477,6 +491,16 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     except Exception as e:
                         print(f"Kızlarbakinbi görseli gönderilemeditühhh: {e}")
+                        await update.message.reply_text(mention_text, parse_mode="HTML")
+                elif kelime == "@admin":
+                    try:
+                        await update.message.reply_photo(
+                            photo=IMAGE_URL_ADMIN,
+                            caption=f"\n{mention_text}",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        print(f"@admin görseli gönderilemedi: {e}")
                         await update.message.reply_text(mention_text, parse_mode="HTML")
                 else:
                     try:
@@ -1180,6 +1204,63 @@ async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot aktif ve çalışıyor.")
 
+# ==================== YENİ: YÖNETİCİ ÖZEL KOMUTLARI (/son ve /warn) ====================
+async def son_mesajlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if update.message.chat.type != "private":
+        await update.message.reply_text("Bu komutu sadece botun özel mesajında kullanabilirsiniz.")
+        return
+        
+    if not userbot or not userbot.is_connected:
+        await update.message.reply_text("❌ Userbot bağlı değil.")
+        return
+        
+    status_msg = await update.message.reply_text("🔄 Son 20 mesaj getiriliyor...")
+    try:
+        authors = []
+        # Pyrogram get_chat_history ile son 20 mesajı okur
+        async for msg in userbot.get_chat_history(int(ALLOWED_GROUP_ID), limit=20):
+            if msg.from_user:
+                name = msg.from_user.first_name or ""
+                if msg.from_user.last_name:
+                    name += f" {msg.from_user.last_name}"
+                authors.append(f"👤 {name.strip()} (ID: <code>{msg.from_user.id}</code>)")
+        
+        if authors:
+            text = "📜 <b>Ana Gruptaki Son 20 Mesajın Sahipleri:</b>\n\n" + "\n".join(authors)
+            await status_msg.edit_text(text, parse_mode="HTML")
+        else:
+            await status_msg.edit_text("Mesaj bulunamadı.")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Hata oluştu: {e}")
+
+async def admin_warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if update.message.chat.type != "private":
+        await update.message.reply_text("Bu komutu sadece botun özel mesajında kullanabilirsiniz.")
+        return
+        
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Kullanım: /warn [telegram_id] [açıklama]")
+        return
+        
+    target_id = args[0]
+    reason = " ".join(args[1:])
+    
+    if not userbot or not userbot.is_connected:
+        await update.message.reply_text("❌ Userbot bağlı değil.")
+        return
+        
+    try:
+        warn_text = f"/warn {target_id} {reason}"
+        await userbot.send_message(chat_id=int(ALLOWED_GROUP_ID), text=warn_text)
+        await update.message.reply_text("✅ Userbot üzerinden ana gruba warn mesajı gönderildi.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gönderilemedi: {e}")
+
 # ==================== ANA YAPI ====================
 def main():
     # Başlangıçta default filtreleri oluşturuyoruz.
@@ -1243,6 +1324,10 @@ def main():
     )
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
+
+    # YENİ: Yönetici özel komutları
+    app.add_handler(CommandHandler("son", son_mesajlar))
+    app.add_handler(CommandHandler("warn", admin_warn_command))
     
     # 155 Dakikada Bir Rastgele Kural
     if app.job_queue:
