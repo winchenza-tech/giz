@@ -110,6 +110,14 @@ def save_json(file_path, data):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def init_default_filters():
+    """Bot başlarken kızlarbakinbi filtresini otomatik tanımlar."""
+    data = load_json(FILTRE_FILE, {})
+    if "kızlarbakinbi" not in data:
+        data["kızlarbakinbi"] = [{"id": "citpitbot", "display_name": "@citpitbot"}]
+        save_json(FILTRE_FILE, data)
+        print("Varsayılan 'kızlarbakinbi' filtresi oluşturuldu.")
+
 async def log_to_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
     """Yönetim log grubuna mesaj gönderir (HTML yapısında, Linkli)."""
     try:
@@ -141,22 +149,21 @@ def get_violation_pair(user1_id, user2_id):
     return None
 
 async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, message_id, violator_id, p1_name, p2_name, reason, reply=True):
-    """Userbot ile warn atar. reply=False ise hiçbir mesajı alıntılamadan direkt gruba yazar."""
+    """Userbot ile warn atar. reply=False ise hiçbir mesajı alıntılamadan gruba düz mesaj atar."""
     chat_id_str = str(chat_id)
     link_chat_id = chat_id_str.replace("-100", "")
     msg_link = f"https://t.me/c/{link_chat_id}/{message_id}"
     
     if userbot and userbot.is_connected:
         try:
-            kwargs = {
-                "chat_id": int(chat_id),
-                "text": f"/warn {violator_id} İletişim İhlali: Karşılıklı muhatap olmama kararına uyulmadı.\nSebep: {reason}"
-            }
-            if reply:
-                kwargs["reply_to_message_id"] = message_id
-
-            await userbot.send_message(**kwargs)
+            warn_text = f"/warn {violator_id} İletişim İhlali: Karşılıklı muhatap olmama kararına uyulmadı.\nSebep: {reason}"
             
+            # reply değişkenine göre mesaj gönderimi tam izole edildi
+            if reply:
+                await userbot.send_message(chat_id=int(chat_id), text=warn_text, reply_to_message_id=message_id)
+            else:
+                await userbot.send_message(chat_id=int(chat_id), text=warn_text)
+                
             log_text = (f"⚠️ <b>İhlal Tespit Edildi ve Warn Atıldı!</b> ✅\n"
                         f"👤 Kişiler: {p1_name} ↔ {p2_name}\n"
                         f"📌 Sebep: {reason}\n"
@@ -453,26 +460,31 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for member in val:
                     uid = member.get("id")
                     dname = member.get("display_name", str(uid))
-                    mentions.append(f'<a href="tg://user?id={uid}">{dname}</a>')
+                    if str(uid).lstrip("-").isdigit():
+                        mentions.append(f'<a href="tg://user?id={uid}">{dname}</a>')
+                    else:
+                        mentions.append(f'{dname}')
                 
                 mention_text = " ".join(mentions)
                 
-                # Özel durum: kızlarbakinbi filtresi için üstte görsel
+                # Özel durum: kızlarbakinbi filtresi için üstte görsel (banner olarak)
                 if kelime == "kızlarbakinbi":
                     try:
                         await update.message.reply_photo(
                             photo=IMAGE_URL_KIZLARBAKINBI,
-                            caption="👀 Kızlar bakın bi!"
+                            caption=f"👀 Kızlar bakın bi!\n\n{mention_text}",
+                            parse_mode="HTML"
                         )
                     except Exception as e:
                         print(f"Kızlarbakinbi görseli gönderilemedi: {e}")
-                
-                try:
-                    await update.message.reply_text(mention_text, parse_mode="HTML")
-                except Exception:
-                    # Fallback
-                    fallback = " ".join([m.get("display_name", "") for m in val])
-                    await update.message.reply_text(fallback)
+                        await update.message.reply_text(mention_text, parse_mode="HTML")
+                else:
+                    try:
+                        await update.message.reply_text(mention_text, parse_mode="HTML")
+                    except Exception:
+                        # Fallback
+                        fallback = " ".join([m.get("display_name", "") for m in val])
+                        await update.message.reply_text(fallback)
             else:
                 # Eski string formatı
                 await update.message.reply_text(val)
@@ -564,30 +576,43 @@ async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
     
+    users_to_add = []
+
+    # 1. Reply varsa onu al
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        users_to_add.append(update.message.reply_to_message.from_user)
+
+    # 2. Entity'lerden (mention ve text_mention) al
+    if update.message.entities:
+        for ent in update.message.entities:
+            if ent.type == "text_mention":
+                users_to_add.append(ent.user)
+            elif ent.type == "mention":
+                uname = update.message.text[ent.offset:ent.offset+ent.length]
+                users_to_add.append(uname)
+    
+    if len(users_to_add) < 2:
+        await update.message.reply_text("Kullanım: /kontrolet @kisi1 @kisi2\nVeya bir mesaja reply atıp /kontrolet @kisi1 yazabilirsin.")
+        return
+
     u1 = None
     u2 = None
-    
-    # Reply desteği: Bir mesaja reply atılırsa, replied kullanıcı ikinci kişi olur (kullanıcı adı olmayanlar için)
-    if update.message.reply_to_message and update.message.reply_to_message.from_user:
-        if len(context.args) < 1:
-            await update.message.reply_text("Kullanım (reply ile): /kontrolet @kisi1")
-            return
-        try:
-            u1 = await userbot.get_users(context.args[0])
-            u2 = update.message.reply_to_message.from_user
-        except Exception as e:
-            await update.message.reply_text(f"İlk kullanıcıyı ekleyemedim: {e}")
-            return
-    else:
-        if len(context.args) < 2 or not userbot:
-            await update.message.reply_text("Kullanım: /kontrolet @kisi1 @kisi2\nVeya bir mesaja reply atıp /kontrolet @kisi1 yazabilirsin.")
-            return
-        try:
-            u1 = await userbot.get_users(context.args[0])
-            u2 = await userbot.get_users(context.args[1])
-        except Exception as e:
-            await update.message.reply_text(f"Kullanıcıları ekleyemedim @eskidenyesil bir bak bakalım: {e}")
-            return
+
+    try:
+        u1_raw = users_to_add[0]
+        if hasattr(u1_raw, 'id'):
+            u1 = u1_raw
+        else:
+            u1 = await userbot.get_users(u1_raw)
+            
+        u2_raw = users_to_add[1]
+        if hasattr(u2_raw, 'id'):
+            u2 = u2_raw
+        else:
+            u2 = await userbot.get_users(u2_raw)
+    except Exception as e:
+        await update.message.reply_text(f"Kullanıcıları ekleyemedim @eskidenyesil bir bak bakalım: {e}")
+        return
     
     try:
         data = load_kontrol_listesi()
@@ -663,7 +688,8 @@ async def kontrol_ihlal_kontrol(update: Update, context: ContextTypes.DEFAULT_TY
             sender.id,
             pair["user1"]["name"],
             pair["user2"]["name"],
-            "Yasaklı olduğu mesaja Yanıt (Reply) attı."
+            "Yasaklı olduğu mesaja Yanıt (Reply) attı.",
+            reply=True
         )
 
 async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -679,6 +705,16 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_id = reaction.message_id
     author_id = RECENT_MESSAGE_AUTHORS.get(msg_id)
     
+    # Userbot cache kurtarması (Bot kapanıp açıldığında eski mesajları görebilsin diye)
+    if not author_id and userbot and userbot.is_connected:
+        try:
+            m = await userbot.get_messages(reaction.chat.id, msg_id)
+            if m and m.from_user:
+                author_id = m.from_user.id
+                RECENT_MESSAGE_AUTHORS[msg_id] = author_id
+        except Exception:
+            pass
+
     if not author_id or actor_id == author_id:
         return
     
@@ -726,18 +762,21 @@ async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TY
     if not forbidden_ids:
         return
     
-    # Mesajdaki mention/text_mention entity'lerini topla
-    entities = (msg.entities or []) + (msg.caption_entities or [])
-    text_content = msg.text or msg.caption or ""
+    # UTF-16 sorununu atlatmak için Telegram'ın parse_entities metodunu kullanıyoruz
+    mentions_dict = {}
+    if msg.text:
+        mentions_dict = msg.parse_entities(["mention", "text_mention"])
+    if msg.caption:
+        mentions_dict.update(msg.parse_caption_entities(["mention", "text_mention"]))
+        
     mentioned_ids = set()
     
-    for ent in entities:
+    for ent, text in mentions_dict.items():
         if ent.type == "text_mention" and getattr(ent, "user", None):
             mentioned_ids.add(ent.user.id)
         elif ent.type == "mention":
-            # @username → userbot ile ID'ye çevir (kullanıcı adı olanlar için)
             try:
-                uname = text_content[ent.offset:ent.offset + ent.length].lstrip("@")
+                uname = text.lstrip("@")
                 if uname and userbot and userbot.is_connected:
                     u = await userbot.get_users(uname)
                     if u and u.id:
@@ -757,7 +796,8 @@ async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TY
                     sender_id,
                     pair["user1"]["name"],
                     pair["user2"]["name"],
-                    "Yasaklı olduğu kişiyi mesajında etiketledi. Bastım uyarıyı."
+                    "Yasaklı olduğu kişiyi mesajında etiketledi. Bastım uyarıyı.",
+                    reply=True
                 )
                 return  # Bir kere uyar yeter
 
@@ -1142,6 +1182,9 @@ async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== ANA YAPI ====================
 def main():
+    # Başlangıçta default filtreleri oluşturuyoruz.
+    init_default_filters()
+    
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(start_userbot).post_shutdown(stop_userbot).build()
     
     # Cache mekanizması ve Spam filtresi
@@ -1153,7 +1196,9 @@ def main():
     
     # İletişim İhlali Kontrolleri (Reply + Mention + Reaction)
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, kontrol_ihlal_kontrol), group=1)
-    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, kontrol_mention_check), group=1)
+    
+    # MENTION KONTROLÜ GROUP 4'E ALINDI. Böylece reply gibi diğer filtreler onu engellemeden mutlaka çalışacak.
+    app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, kontrol_mention_check), group=4)
     app.add_handler(MessageReactionHandler(kontrol_reaction))
     
     # Muhatap Olma Anketi Tetikleyici
