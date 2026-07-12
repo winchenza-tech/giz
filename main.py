@@ -50,6 +50,7 @@ ADMIN_LOG_GROUP_ID = "-5199865415"
 RULES_SENT_FILE = "rules_sent.json"
 KONTROL_FILE = "kontrol_listesi.json"
 FILTRE_FILE = "filtreler.json"
+REKLAM_FILE = "reklam_listesi.json"
 
 RECENT_MESSAGE_AUTHORS = OrderedDict()
 MAX_CACHE_SIZE = 2500
@@ -721,7 +722,6 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not reaction:
         return
     
-    # DÜZELTME: reaction.user (doğru attribute)
     actor_id = reaction.user.id if reaction.user else None
     if not actor_id:
         return
@@ -755,7 +755,7 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply=False # Emoji atıldığında hiçbir mesajı alıntılamadan warn atar
         )
 
-# ==================== YENİ: MENTION (ETİKET) İHLAL KONTROLÜ ====================
+# ==================== MENTION (ETİKET) İHLAL KONTROLÜ ====================
 async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reply veya emoji olmayan, ama mesaj içinde @etiket yapıldığında ihlali yakalar."""
     msg = update.message
@@ -825,7 +825,7 @@ async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TY
                 )
                 return  # Bir kere uyar yeter
 
-# ==================== YEDEK / YÜKLE (KONTROL + FİLTRE) - BULUT / GÜNCELLEME SONRASI KURTarma ====================
+# ==================== YEDEK / YÜKLE (KONTROL + FİLTRE) ====================
 async def kontrolyedekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
@@ -1188,14 +1188,29 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             removed += 1
     await update.message.reply_text(f"{removed} hatırlatıcı silindi." if removed else "Aktif hatırlatıcı yok.")
 
-# ==================== ANTI SPAM (TAM ORİJİNAL) ====================
+# ==================== ANTI SPAM & REKLAM ENGELLEME ====================
 async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     user = update.message.from_user
-    if user and user.username and user.username.lower() == "octopusgame_bot":
-        text = update.message.text or update.message.caption or ""
+    if not user:
+        return
+        
+    text = update.message.text or update.message.caption or ""
+    
+    # Orijinal octopusgame_bot kontrolü
+    if user.username and user.username.lower() == "octopusgame_bot":
         if re.search(r'(?i)(t\.me|telegram\.me|katıl|aramıza)', text):
+            try:
+                await update.message.delete()
+            except:
+                pass
+        return
+
+    # Yeni reklam listesi kontrolü
+    reklam_data = load_json(REKLAM_FILE, [])
+    if str(user.id) in reklam_data:
+        if re.search(r'(?i)(http[s]?://|t\.me|telegram\.me|katıl|aramıza|reklam)', text):
             try:
                 await update.message.delete()
             except:
@@ -1204,47 +1219,51 @@ async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot aktif ve çalışıyor.")
 
-# ==================== YENİ: YÖNETİCİ ÖZEL KOMUTLARI (/son ve /warn) ====================
-async def son_mesajlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
-        return
-    if update.message.chat.type != "private":
-        await update.message.reply_text("Bu komutu sadece botun özel mesajında kullanabilirsiniz.")
-        return
-        
-    if not userbot or not userbot.is_connected:
-        await update.message.reply_text("❌ Userbot bağlı değil.")
-        return
-        
-    status_msg = await update.message.reply_text("🔄 Son 20 mesaj getiriliyor...")
-    try:
-        authors = []
-        # Pyrogram get_chat_history ile son 20 mesajı okur
-        async for msg in userbot.get_chat_history(int(ALLOWED_GROUP_ID), limit=20):
-            if msg.from_user:
-                name = msg.from_user.first_name or ""
-                if msg.from_user.last_name:
-                    name += f" {msg.from_user.last_name}"
-                authors.append(f"👤 {name.strip()} (ID: <code>{msg.from_user.id}</code>)")
-        
-        if authors:
-            text = "📜 <b>Ana Gruptaki Son 20 Mesajın Sahipleri:</b>\n\n" + "\n".join(authors)
-            await status_msg.edit_text(text, parse_mode="HTML")
-        else:
-            await status_msg.edit_text("Mesaj bulunamadı.")
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Hata oluştu: {e}")
+# ==================== YENİ EKLENEN ÖZELLİKLER ====================
 
-async def admin_warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def gizhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot yöneticileri için emir kipiyle hazırlanmış kullanım kılavuzu."""
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
     if update.message.chat.type != "private":
-        await update.message.reply_text("Bu komutu sadece botun özel mesajında kullanabilirsiniz.")
         return
         
+    help_text = """
+🛠 YÖNETİCİ KILAVUZU
+
+Filtre İşlemleri:
+- Yeni filtre eklemek için `/filtreekle kelime @kullanici` yaz.
+- Filtreyi silmek için `/filtresil kelime` yaz.
+- Filtreye kişi eklemek için mesaja yanıt verip `/filtrekisiekle kelime` yaz.
+- Filtreden kişi silmek için `/filtrekisisil kelime numara` yaz.
+
+İletişim Yasağı (Kontrol):
+- Yasak eklemek için `/kontrolet @kisi1 @kisi2` yaz.
+- Yasak silmek için `/kontrolsil numara` yaz.
+
+Reklam Engelleme:
+- Yeni bir botu/kişiyi retklam engellemek için ana grupta onun mesajına yanıt verip `/reklamengelle` yaz veya botun içinde `/reklamengelle ID` yaz.
+- Engellenenleri görmek için `/reklamliste` yaz.
+- Listeden çıkarmak için `/reklamcikar numara` yaz.
+
+Grup Yönetimi:
+- Gruba uyarı, ban veya mute atmak için botun özel mesajında `/warn ID sebep`, `/ban ID sebep` veya `/mute ID sebep` yaz. (Ana grupta çalışmaz, sessiz kalır).
+- Gruptaki son 20 mesajı ID'leriyle görmek için botun özel mesajında `/son` yaz.
+- Herkesi tek mesajda etiketlemek için ana gruba `@all` yaz.
+"""
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def admin_group_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot özel mesajından /warn, /ban, /mute kullanma komutu"""
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if update.message.chat.type != "private":
+        return # Yalnızca bot içinden çalışsın, ana grupta uyarı bile verme.
+        
+    command = update.message.text.split()[0].lower() # /warn, /ban, /mute vs.
     args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("Kullanım: /warn [telegram_id] [açıklama]")
+    if len(args) < 1:
+        await update.message.reply_text(f"Kullanım: {command} [telegram_id] [açıklama]")
         return
         
     target_id = args[0]
@@ -1255,11 +1274,157 @@ async def admin_warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
         
     try:
-        warn_text = f"/warn {target_id} {reason}"
-        await userbot.send_message(chat_id=int(ALLOWED_GROUP_ID), text=warn_text)
-        await update.message.reply_text("✅ Userbot üzerinden ana gruba warn mesajı gönderildi.")
+        action_text = f"{command} {target_id} {reason}".strip()
+        await userbot.send_message(chat_id=int(ALLOWED_GROUP_ID), text=action_text)
+        await update.message.reply_text(f"✅ Userbot üzerinden ana gruba {command} mesajı gönderildi.")
     except Exception as e:
         await update.message.reply_text(f"❌ Gönderilemedi: {e}")
+
+async def son_mesajlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if update.message.chat.type != "private":
+        return
+        
+    if not userbot or not userbot.is_connected:
+        await update.message.reply_text("❌ Userbot bağlı değil.")
+        return
+        
+    status_msg = await update.message.reply_text("🔄 Son 20 mesaj getiriliyor...")
+    try:
+        authors = []
+        async for msg in userbot.get_chat_history(int(ALLOWED_GROUP_ID), limit=20):
+            if msg.from_user:
+                name = msg.from_user.first_name or ""
+                if msg.from_user.last_name:
+                    name += f" {msg.from_user.last_name}"
+                # <code> etiketi eklendi, böylece ID kolayca kopyalanabilir
+                authors.append(f"👤 {name.strip()} (ID: <code>{msg.from_user.id}</code>)")
+        
+        if authors:
+            authors.reverse() # En son atılan mesaj en altta yer alsın diye listeyi ters çevirdik
+            text = "📜 <b>Ana Gruptaki Son 20 Mesajın Sahipleri:</b>\n\n" + "\n".join(authors)
+            await status_msg.edit_text(text, parse_mode="HTML")
+        else:
+            await status_msg.edit_text("Mesaj bulunamadı.")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Hata oluştu: {e}")
+
+async def reklamengelle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    
+    target_id = None
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target_id = update.message.reply_to_message.from_user.id
+    elif context.args:
+        target_id = context.args[0]
+    
+    if not target_id:
+        await update.message.reply_text("Reklamcının mesajına reply at veya ID'sini yaz.")
+        return
+        
+    data = load_json(REKLAM_FILE, [])
+    if str(target_id) not in data:
+        data.append(str(target_id))
+        save_json(REKLAM_FILE, data)
+        await update.message.reply_text(f"✅ {target_id} ID'li kullanıcı reklam kara listesine eklendi.")
+    else:
+        await update.message.reply_text("Bu zaten listede.")
+
+async def reklamliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    data = load_json(REKLAM_FILE, [])
+    if not data:
+        await update.message.reply_text("Reklam listesi boş.")
+        return
+    
+    text = "🚫 **Reklamcı Listesi:**\n\n"
+    for idx, user_id in enumerate(data, 1):
+        text += f"{idx}. <code>{user_id}</code>\n"
+    await update.message.reply_text(text, parse_mode="HTML")
+
+async def reklamcikar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    if not context.args:
+        await update.message.reply_text("Listeden çıkarmak için sıra numarası yaz. Örn: /reklamcikar 1")
+        return
+    
+    try:
+        num = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Numara gir.")
+        return
+        
+    data = load_json(REKLAM_FILE, [])
+    if num < 1 or num > len(data):
+        await update.message.reply_text("Geçersiz numara.")
+        return
+        
+    removed = data.pop(num - 1)
+    save_json(REKLAM_FILE, data)
+    await update.message.reply_text(f"✅ {removed} listeden çıkarıldı.")
+
+async def tag_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gruptaki tüm üyeleri beşer beşer tek mesaj içerisinde asenkron edit ile etiketler."""
+    if not update.message or not update.message.text:
+        return
+    if str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+    if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
+        return
+    
+    text = update.message.text.strip().lower()
+    if text != "@all":
+        return
+        
+    if not userbot or not userbot.is_connected:
+        await update.message.reply_text("❌ Userbot bağlı değil.")
+        return
+
+    status_msg = await update.message.reply_text("🔄 Üyeler toplanıyor...")
+    try:
+        members = []
+        async for member in userbot.get_chat_members(int(ALLOWED_GROUP_ID)):
+            if not member.user.is_bot and not member.user.is_deleted:
+                name = member.user.first_name or "Üye"
+                uid = member.user.id
+                members.append(f'<a href="tg://user?id={uid}">{name}</a>')
+        
+        if not members:
+            await status_msg.edit_text("Kimseyi bulamadım.")
+            return
+        
+        # Üyeleri beşerli gruplara böler
+        chunks = [members[i:i + 5] for i in range(0, len(members), 5)]
+        await status_msg.edit_text("⏳ Etiketleme başlıyor...")
+        
+        # Etiketlemeyi aynı mesaj içinde sırayla değiştirerek yapar
+        for chunk in chunks:
+            mention_text = " ".join(chunk)
+            try:
+                await status_msg.edit_text(f"🔔 {mention_text}", parse_mode="HTML")
+                await asyncio.sleep(5.5)  # Her etiketleme arası 5 sn bekler (Telegram limitine takılmamak için)
+            except Exception as e:
+                print(f"Edit hatası: {e}")
+        
+        await status_msg.edit_text("✅ Etiketleme tamamlandı.")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Hata: {e}")
+
+async def channel_forwarder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """3613910089 idli kanala düşen gönderileri -5199865415 numaralı log grubuna olduğu gibi kopyalar."""
+    post = update.channel_post
+    if not post:
+        return
+    chat_id_str = str(post.chat.id)
+    if "3613910089" in chat_id_str:
+        try:
+            await post.copy(chat_id=int(ADMIN_LOG_GROUP_ID))
+        except Exception as e:
+            print(f"Kanal mesajı iletilemedi: {e}")
 
 # ==================== ANA YAPI ====================
 def main():
@@ -1272,6 +1437,9 @@ def main():
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)), cache_message_author), group=-2)
     app.add_handler(MessageHandler(filters.ALL, anti_spam_octopus), group=-1)
     
+    # Kanal dinleyici (Yönlendirme için)
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, channel_forwarder), group=-3)
+    
     # Otomatik Kelime/Filtre Dinleyici
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.TEXT & ~filters.COMMAND, filtre_dinleyici), group=3)
     
@@ -1281,6 +1449,9 @@ def main():
     # MENTION KONTROLÜ GROUP 4'E ALINDI. Böylece reply gibi diğer filtreler onu engellemeden mutlaka çalışacak.
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, kontrol_mention_check), group=4)
     app.add_handler(MessageReactionHandler(kontrol_reaction))
+    
+    # @all Dinleyicisi
+    app.add_handler(MessageHandler(filters.Regex(r'(?i)^@all$'), tag_all), group=5)
     
     # Muhatap Olma Anketi Tetikleyici
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, muhatap_olma_anket), group=2)
@@ -1308,6 +1479,11 @@ def main():
     app.add_handler(CommandHandler("kontrolyedekle", kontrolyedekle))
     app.add_handler(CommandHandler("kontrolyukle", kontrolyukle))
     
+    # Reklam Yönetimi Komutları
+    app.add_handler(CommandHandler("reklamengelle", reklamengelle))
+    app.add_handler(CommandHandler("reklamliste", reklamliste))
+    app.add_handler(CommandHandler("reklamcikar", reklamcikar))
+    
     # Duyuru Anketi
     app.add_handler(CommandHandler("duyuru", duyuru_start))
     app.add_handler(PollAnswerHandler(duyuru_poll_answer))
@@ -1325,9 +1501,10 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^read_"))
 
-    # YENİ: Yönetici özel komutları
+    # Yönetici özel komutları
+    app.add_handler(CommandHandler("gizhelp", gizhelp))
     app.add_handler(CommandHandler("son", son_mesajlar))
-    app.add_handler(CommandHandler("warn", admin_warn_command))
+    app.add_handler(CommandHandler(["warn", "ban", "mute"], admin_group_actions))
     
     # 155 Dakikada Bir Rastgele Kural
     if app.job_queue:
