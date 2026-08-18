@@ -17,6 +17,8 @@ from google import genai
 from google.genai import types
 from pyrogram import Client
 from pyrogram.raw import functions
+from pyrogram.raw.functions.phone import CreateGroupCall, LeaveGroupCall, DiscardGroupCall
+from pyrogram.raw.functions.channels import GetFullChannel
 
 # ==================== ÇEVRE DEĞİŞKENLERİ & AYARLAR ====================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -114,7 +116,6 @@ def save_json(file_path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def init_default_filters():
-    """Bot başlarken kızlarbakinbi ve @admin filtrelerini otomatik tanımlar."""
     data = load_json(FILTRE_FILE, {})
     updated = False
     if "kızlarbakinbi" not in data:
@@ -130,7 +131,6 @@ def init_default_filters():
         save_json(FILTRE_FILE, data)
 
 async def log_to_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Yönetim log grubuna mesaj gönderir (HTML yapısında, Linkli)."""
     try:
         await context.bot.send_message(
             chat_id=int(ADMIN_LOG_GROUP_ID),
@@ -145,7 +145,6 @@ def load_kontrol_listesi():
     return load_json(KONTROL_FILE, {"pairs": [], "next_pair_id": 1})
 
 def get_violation_pair(user1_id, user2_id):
-    """Eğer iki kullanıcı listeyse çifti döndürür, aksi halde None"""
     data = load_kontrol_listesi()
     for pair in data["pairs"]:
         try:
@@ -160,7 +159,6 @@ def get_violation_pair(user1_id, user2_id):
     return None
 
 async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, message_id, violator_id, p1_name, p2_name, reason, reply=True):
-    """Userbot ile warn atar. reply=False ise hiçbir mesajı alıntılamadan gruba düz mesaj atar."""
     chat_id_str = str(chat_id)
     link_chat_id = chat_id_str.replace("-100", "")
     msg_link = f"https://t.me/c/{link_chat_id}/{message_id}"
@@ -195,7 +193,7 @@ async def trigger_userbot_warn(context: ContextTypes.DEFAULT_TYPE, chat_id, mess
                     f"🔗 <a href='{msg_link}'>Mesaja Git</a>")
         await log_to_admin(context, log_text)
 
-# ==================== KURALLAR (TAM HALİ) ====================
+# ==================== KURALLAR ====================
 RULES = [
     "📌Kişisel verilerin ifşası uyarılmaksızın ban sebebidir.",
     "📌Şahısa küfür yasaktır. Onun haricinde küfür serbesttir. Karşılıklı atışmalarda küfür kullanımında her iki taraf da uyarılacaktır.",
@@ -235,7 +233,7 @@ async def post_random_rule(context: ContextTypes.DEFAULT_TYPE):
     data["sent"] = list(sent)
     save_json(RULES_SENT_FILE, data)
 
-# ==================== FİLTRE ÖZELLİĞİ (ID TABANLI - DÜZELTİLMİŞ) ====================
+# ==================== FİLTRE ÖZELLİĞİ ====================
 async def filtreekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
@@ -502,7 +500,7 @@ async def filtre_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(val)
             break
 
-# ==================== KONTROL (İLETİŞİM YASAĞI) - ID TABANLI ====================
+# ==================== KONTROL (İLETİŞİM YASAĞI) ====================
 MUHATAP_REGEX = re.compile(r'(?i)\b(benimle muhatap olma|muhatap olma|muhatap olmayalım)\b(?!ma)')
 
 async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -739,7 +737,7 @@ async def kontrol_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply=False
         )
 
-# ==================== MENTION (ETİKET) İHLAL KONTROLÜ ====================
+# ==================== MENTION İHLAL KONTROLÜ ====================
 async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or (not msg.text and not msg.caption):
@@ -805,7 +803,7 @@ async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TY
                 )
                 return
 
-# ==================== YEDEK / YÜKLE (KONTROL + FİLTRE) ====================
+# ==================== YEDEK / YÜKLE ====================
 async def kontrolyedekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
@@ -934,7 +932,7 @@ async def filtreyukle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Hata oluştu: {e}")
 
-# ==================== /SORU (TAM ORİJİNAL) ====================
+# ==================== /SORU ====================
 async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == "private" or str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
@@ -995,7 +993,7 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         await update.message.reply_text("Hata.")
 
-# ==================== DUYURU (DÜZELTİLMİŞ) ====================
+# ==================== DUYURU (GÜÇLENDİRİLMİŞ) ====================
 async def duyuru_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return
@@ -1039,7 +1037,7 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text=duyuru_text,
             disable_notification=(selected == 1)
         )
-        # Pin işlemi
+        # Pin
         await context.bot.pin_chat_message(
             chat_id=DUYURU_GROUP_ID,
             message_id=msg.message_id,
@@ -1050,11 +1048,10 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text="✅ Duyuru gruba gönderildi ve sabitlendi."
         )
     except Exception as e:
-        error_msg = f"❌ Duyuru gönderilemedi / sabitlenemedi:\n<code>{e}</code>"
         try:
             await context.bot.send_message(
                 chat_id=poll_data["chat_id"],
-                text=error_msg,
+                text=f"❌ Duyuru hatası:\n<code>{e}</code>\n\nBotun grupta 'Mesajları sabitleme' yetkisi olduğundan emin ol.",
                 parse_mode="HTML"
             )
         except:
@@ -1063,7 +1060,7 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     del context.bot_data[f"duyuru_poll_{poll_id}"]
 
-# ==================== HATIRLATMA (TAM ORİJİNAL) ====================
+# ==================== HATIRLATMA ====================
 async def hatirlat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return ConversationHandler.END
@@ -1185,7 +1182,7 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             removed += 1
     await update.message.reply_text(f"{removed} hatırlatıcı silindi." if removed else "Aktif hatırlatıcı yok.")
 
-# ==================== ANTI SPAM & REKLAM ENGELLEME ====================
+# ==================== ANTI SPAM ====================
 async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -1214,8 +1211,7 @@ async def anti_spam_octopus(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot aktif ve çalışıyor.")
 
-# ==================== YENİ EKLENEN ÖZELLİKLER ====================
-
+# ==================== YÖNETİCİ KOMUTLARI ====================
 async def gizhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
@@ -1414,49 +1410,9 @@ async def channel_forwarder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Kanal mesajı iletilemedi: {e}")
 
-# ==================== SESLİ SOHBET (VOICE CHAT) - USERBOT MESAJLI ====================
-async def get_active_group_call(chat_id: int):
-    try:
-        peer = await userbot.resolve_peer(chat_id)
-        full = await userbot.invoke(functions.channels.GetFullChannel(channel=peer))
-        if hasattr(full, "full_chat") and full.full_chat.call:
-            return full.full_chat.call
-    except Exception as e:
-        print(f"get_active_group_call hata: {e}")
-    return None
-
-
-async def start_voice_chat(chat_id: int):
-    if not userbot or not userbot.is_connected:
-        return False, "Userbot bağlı değil."
-    try:
-        peer = await userbot.resolve_peer(chat_id)
-        await userbot.invoke(
-            functions.phone.CreateGroupCall(
-                peer=peer,
-                random_id=random.randint(0, 2147483647)
-            )
-        )
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-async def stop_voice_chat(chat_id: int):
-    if not userbot or not userbot.is_connected:
-        return False, "Userbot bağlı değil."
-    try:
-        call = await get_active_group_call(chat_id)
-        if call:
-            await userbot.invoke(functions.phone.DiscardGroupCall(call=call))
-            return True, None
-        return False, "Aktif sesli sohbet bulunamadı."
-    except Exception as e:
-        return False, str(e)
-
-
+# ==================== SESLİ SOHBET (DOĞRU MANTIK) ====================
 async def sesliac(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Üyeler /sesliac yazınca: Userbot mesaj yazar → sesli açar → 15 sn → kapatır → bitiş mesajı yazar."""
+    """Sesli sohbet aç → 15 sn userbot içinde kal → LeaveGroupCall (sesli açık kalır)"""
     if str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
     if not userbot or not userbot.is_connected:
@@ -1466,28 +1422,38 @@ async def sesliac(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = int(ALLOWED_GROUP_ID)
 
     try:
-        # Userbot mesaj yazıyor
         await userbot.send_message(chat_id, "Zenithar uzaktan sesli sohbeti aktif ediyor…")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Userbot mesaj yazamadı: {e}")
-        return
+        
+        peer = await userbot.resolve_peer(chat_id)
+        full = await userbot.invoke(GetFullChannel(channel=peer))
+        call_info = full.full_chat.call if hasattr(full.full_chat, "call") else None
 
-    success, err = await start_voice_chat(chat_id)
-    if not success:
-        await userbot.send_message(chat_id, f"❌ Sesli sohbet açılamadı: {err}")
-        return
+        if call_info:
+            await userbot.send_message(chat_id, "⚠️ Sesli sohbet zaten açık.")
+            return
 
-    await asyncio.sleep(15)
+        # Aç
+        await userbot.invoke(CreateGroupCall(peer=peer, random_id=random.randint(100000, 999999)))
+        
+        await asyncio.sleep(15)
 
-    success2, err2 = await stop_voice_chat(chat_id)
-    if success2:
+        # Userbot çıksın ama sesli sohbet açık kalsın
+        new_full = await userbot.invoke(GetFullChannel(channel=peer))
+        if hasattr(new_full.full_chat, "call") and new_full.full_chat.call:
+            await userbot.invoke(LeaveGroupCall(call=new_full.full_chat.call, source=0))
+
         await userbot.send_message(chat_id, "Sesli sohbet aktif üyeler katılabilir")
-    else:
-        await userbot.send_message(chat_id, f"⚠️ Sesli sohbet kapatılamadı: {err2}")
+
+    except Exception as e:
+        try:
+            await userbot.send_message(chat_id, f"❌ Hata: {e}")
+        except:
+            pass
+        print(f"sesliac hata: {e}")
 
 
 async def seslireset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Üyeler /seslireset yazınca: kapat → 7 sn → aç → 15 sn → kapat + mesajlar."""
+    """Mevcut sesliyi tamamen kapat → 7 sn bekle → yeniden aç → 15 sn → Leave"""
     if str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
     if not userbot or not userbot.is_connected:
@@ -1498,27 +1464,34 @@ async def seslireset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await userbot.send_message(chat_id, "Zenithar uzaktan sesli sohbeti resetliyor…")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Userbot mesaj yazamadı: {e}")
-        return
+        
+        peer = await userbot.resolve_peer(chat_id)
+        full = await userbot.invoke(GetFullChannel(channel=peer))
+        call_info = full.full_chat.call if hasattr(full.full_chat, "call") else None
 
-    # Mevcut sesliyi kapat
-    await stop_voice_chat(chat_id)
-    await asyncio.sleep(7)
+        # Varsa tamamen kapat
+        if call_info:
+            await userbot.invoke(DiscardGroupCall(call=call_info))
+            await asyncio.sleep(7)
 
-    # Yeniden aç
-    success, err = await start_voice_chat(chat_id)
-    if not success:
-        await userbot.send_message(chat_id, f"❌ Sesli sohbet yeniden açılamadı: {err}")
-        return
+        # Yeniden aç
+        await userbot.invoke(CreateGroupCall(peer=peer, random_id=random.randint(100000, 999999)))
+        
+        await asyncio.sleep(15)
 
-    await asyncio.sleep(15)
+        # Userbot çıksın, sesli açık kalsın
+        new_full = await userbot.invoke(GetFullChannel(channel=peer))
+        if hasattr(new_full.full_chat, "call") and new_full.full_chat.call:
+            await userbot.invoke(LeaveGroupCall(call=new_full.full_chat.call, source=0))
 
-    success2, err2 = await stop_voice_chat(chat_id)
-    if success2:
         await userbot.send_message(chat_id, "Sesli sohbet aktif üyeler katılabilir")
-    else:
-        await userbot.send_message(chat_id, f"⚠️ Sesli sohbet kapatılamadı: {err2}")
+
+    except Exception as e:
+        try:
+            await userbot.send_message(chat_id, f"❌ Hata: {e}")
+        except:
+            pass
+        print(f"seslireset hata: {e}")
 
 # ==================== ANA YAPI ====================
 def main():
@@ -1579,7 +1552,7 @@ def main():
     app.add_handler(CommandHandler("son", son_mesajlar))
     app.add_handler(CommandHandler(["warn", "ban", "mute"], admin_group_actions))
     
-    # Sesli sohbet komutları
+    # Sesli sohbet
     app.add_handler(CommandHandler("sesliac", sesliac))
     app.add_handler(CommandHandler("seslireset", seslireset))
     
