@@ -16,6 +16,7 @@ from telegram.ext import (
 from google import genai
 from google.genai import types
 from pyrogram import Client
+from pyrogram.raw import functions
 
 # ==================== ÇEVRE DEĞİŞKENLERİ & AYARLAR ====================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -1426,6 +1427,105 @@ async def channel_forwarder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Kanal mesajı iletilemedi: {e}")
 
+# ==================== SESLİ SOHBET (VOICE CHAT) YÖNETİMİ ====================
+async def get_active_group_call(chat_id: int):
+    """Aktif sesli sohbeti döndürür (yoksa None)."""
+    try:
+        peer = await userbot.resolve_peer(chat_id)
+        full = await userbot.invoke(functions.channels.GetFullChannel(channel=peer))
+        if hasattr(full, "full_chat") and full.full_chat.call:
+            return full.full_chat.call
+    except Exception as e:
+        print(f"get_active_group_call hata: {e}")
+    return None
+
+
+async def start_voice_chat(chat_id: int):
+    """Sesli sohbeti açar (mikrofon kapalı - stream yok)."""
+    if not userbot or not userbot.is_connected:
+        return False, "Userbot bağlı değil."
+    try:
+        peer = await userbot.resolve_peer(chat_id)
+        await userbot.invoke(
+            functions.phone.CreateGroupCall(
+                peer=peer,
+                random_id=random.randint(0, 2147483647)
+            )
+        )
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def stop_voice_chat(chat_id: int):
+    """Sesli sohbeti kapatır (Discard)."""
+    if not userbot or not userbot.is_connected:
+        return False, "Userbot bağlı değil."
+    try:
+        call = await get_active_group_call(chat_id)
+        if call:
+            await userbot.invoke(functions.phone.DiscardGroupCall(call=call))
+            return True, None
+        return False, "Aktif sesli sohbet bulunamadı."
+    except Exception as e:
+        return False, str(e)
+
+
+async def sesliac(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Üyeler /sesliac yazınca: sesli sohbet aç → 15 sn kal → kapat."""
+    if str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+    if not userbot or not userbot.is_connected:
+        await update.message.reply_text("❌ Userbot bağlı değil.")
+        return
+
+    status = await update.message.reply_text("🔄 Sesli sohbet açılıyor (mikrofon kapalı)...")
+    success, err = await start_voice_chat(int(ALLOWED_GROUP_ID))
+    if not success:
+        await status.edit_text(f"❌ Açılamadı: {err}")
+        return
+
+    await status.edit_text("✅ Sesli sohbet açıldı. 15 saniye sonra otomatik kapatılacak.")
+    await asyncio.sleep(15)
+
+    success2, err2 = await stop_voice_chat(int(ALLOWED_GROUP_ID))
+    if success2:
+        await status.edit_text("✅ Sesli sohbet 15 saniye sonra kapatıldı.")
+    else:
+        await status.edit_text(f"⚠️ Açıldı ama kapatılamadı: {err2}")
+
+
+async def seslireset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Üyeler /seslireset yazınca: mevcut sesliyi kapat → 7 sn bekle → yeniden aç → 15 sn kal → kapat."""
+    if str(update.message.chat.id) != ALLOWED_GROUP_ID:
+        return
+    if not userbot or not userbot.is_connected:
+        await update.message.reply_text("❌ Userbot bağlı değil.")
+        return
+
+    status = await update.message.reply_text("🔄 Sesli sohbet resetleniyor...")
+
+    # 1. Mevcut sesliyi kapat
+    await stop_voice_chat(int(ALLOWED_GROUP_ID))
+    await status.edit_text("🔇 Mevcut sesli sohbet kapatıldı. 7 saniye bekleniyor...")
+    await asyncio.sleep(7)
+
+    # 2. Yeniden aç
+    success, err = await start_voice_chat(int(ALLOWED_GROUP_ID))
+    if not success:
+        await status.edit_text(f"❌ Yeniden açılamadı: {err}")
+        return
+
+    await status.edit_text("✅ Sesli sohbet yeniden açıldı. 15 saniye sonra kapatılacak.")
+    await asyncio.sleep(15)
+
+    # 3. Son kez kapat
+    success2, err2 = await stop_voice_chat(int(ALLOWED_GROUP_ID))
+    if success2:
+        await status.edit_text("✅ Sesli sohbet reset tamamlandı ve kapatıldı.")
+    else:
+        await status.edit_text(f"⚠️ Açıldı ama son kapatma başarısız: {err2}")
+
 # ==================== ANA YAPI ====================
 def main():
     # Başlangıçta default filtreleri oluşturuyoruz.
@@ -1505,6 +1605,10 @@ def main():
     app.add_handler(CommandHandler("gizhelp", gizhelp))
     app.add_handler(CommandHandler("son", son_mesajlar))
     app.add_handler(CommandHandler(["warn", "ban", "mute"], admin_group_actions))
+    
+    # Sesli sohbet komutları
+    app.add_handler(CommandHandler("sesliac", sesliac))
+    app.add_handler(CommandHandler("seslireset", seslireset))
     
     # 155 Dakikada Bir Rastgele Kural
     if app.job_queue:
