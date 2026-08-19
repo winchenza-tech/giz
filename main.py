@@ -582,6 +582,24 @@ async def muhatap_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     del context.bot_data[f"muhatap_poll_{poll_id}"]
 
+
+async def combined_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hem muhatap hem duyuru poll cevaplarını tek handler'da işle (sırayla kontrol et)"""
+    poll_answer = update.poll_answer
+    poll_id = poll_answer.poll_id
+
+    # 1) Muhatap (iletişim yasağı) poll'u mu?
+    muhatap_data = context.bot_data.get(f"muhatap_poll_{poll_id}")
+    if muhatap_data:
+        await muhatap_poll_answer(update, context)
+        return
+
+    # 2) Duyuru poll'u mu?
+    duyuru_data = context.bot_data.get(f"duyuru_poll_{poll_id}")
+    if duyuru_data:
+        await duyuru_poll_answer(update, context)
+        return
+
 async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) not in ALLOWED_KONTROL_USERS:
         return
@@ -1412,7 +1430,7 @@ async def channel_forwarder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== SESLİ SOHBET (DOĞRU MANTIK) ====================
 async def sesliac(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sesli sohbet aç → 15 sn userbot içinde kal → LeaveGroupCall (sesli açık kalır)"""
+    """Sesli sohbet aç → başarıyla açıldıktan sonra 10-15 sn userbot orada kalsın → LeaveGroupCall (sesli açık kalır)"""
     if str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
     if not userbot or not userbot.is_connected:
@@ -1435,7 +1453,8 @@ async def sesliac(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Aç
         await userbot.invoke(CreateGroupCall(peer=peer, random_id=random.randint(100000, 999999)))
         
-        await asyncio.sleep(15)
+        # Başarıyla açıldıktan sonra 12 saniye orada kalsın, sonra çıksın
+        await asyncio.sleep(12)
 
         # Userbot çıksın ama sesli sohbet açık kalsın
         new_full = await userbot.invoke(GetFullChannel(channel=peer))
@@ -1453,7 +1472,7 @@ async def sesliac(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def seslireset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mevcut sesliyi tamamen kapat → 7 sn bekle → yeniden aç → 15 sn → Leave"""
+    """Mevcut sesliyi tamamen kapat → 5 sn bekle → /sesliac gibi yeniden aç → 12 sn kal → Leave"""
     if str(update.message.chat.id) != ALLOWED_GROUP_ID:
         return
     if not userbot or not userbot.is_connected:
@@ -1472,12 +1491,13 @@ async def seslireset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Varsa tamamen kapat
         if call_info:
             await userbot.invoke(DiscardGroupCall(call=call_info))
-            await asyncio.sleep(7)
+            await asyncio.sleep(5)
 
-        # Yeniden aç
+        # Yeniden aç (sesliac mantığı)
         await userbot.invoke(CreateGroupCall(peer=peer, random_id=random.randint(100000, 999999)))
         
-        await asyncio.sleep(15)
+        # Başarıyla açıldıktan sonra 12 saniye orada kalsın, sonra çıksın
+        await asyncio.sleep(12)
 
         # Userbot çıksın, sesli açık kalsın
         new_full = await userbot.invoke(GetFullChannel(channel=peer))
@@ -1508,7 +1528,8 @@ def main():
     app.add_handler(MessageReactionHandler(kontrol_reaction))
     app.add_handler(MessageHandler(filters.Regex(r'(?i)^@all$'), tag_all), group=5)
     app.add_handler(MessageHandler(filters.Chat(chat_id=int(ALLOWED_GROUP_ID)) & filters.REPLY, muhatap_olma_anket), group=2)
-    app.add_handler(PollAnswerHandler(muhatap_poll_answer))
+    # Tek PollAnswerHandler: hem muhatap hem duyuru poll'larını işler (önceki ayrı handler'lar birbirini eziyordu)
+    app.add_handler(PollAnswerHandler(combined_poll_answer))
     
     app.add_handler(CommandHandler("start", send_guide))
     app.add_handler(CommandHandler("yardim", send_guide))
@@ -1534,7 +1555,6 @@ def main():
     app.add_handler(CommandHandler("reklamcikar", reklamcikar))
     
     app.add_handler(CommandHandler("duyuru", duyuru_start))
-    app.add_handler(PollAnswerHandler(duyuru_poll_answer))
     
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("hatirlat", hatirlat_start)],
