@@ -1051,15 +1051,15 @@ async def duyuru_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         msg = await context.bot.send_message(
-            chat_id=DUYURU_GROUP_ID,
+            chat_id=int(DUYURU_GROUP_ID),
             text=duyuru_text,
             disable_notification=(selected == 1)
         )
         # Pin
         await context.bot.pin_chat_message(
-            chat_id=DUYURU_GROUP_ID,
+            chat_id=int(DUYURU_GROUP_ID),
             message_id=msg.message_id,
-            disable_notification=True
+            disable_notification=(selected == 1)
         )
         await context.bot.send_message(
             chat_id=poll_data["chat_id"],
