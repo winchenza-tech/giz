@@ -11,7 +11,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, ConversationHandler, MessageHandler, filters,
-    PollAnswerHandler, MessageReactionHandler
+    PollAnswerHandler, MessageReactionHandler, ApplicationHandlerStop, TypeHandler
 )
 from google import genai
 from google.genai import types
@@ -58,6 +58,9 @@ REKLAM_FILE = "reklam_listesi.json"
 RECENT_MESSAGE_AUTHORS = OrderedDict()
 MAX_CACHE_SIZE = 2500
 
+UNAUTHORIZED_COUNTS = {}
+BLOCKED_USERS = set()
+
 # ==================== PYROGRAM USERBOT ====================
 userbot = None
 if PYROGRAM_API_ID and PYROGRAM_API_HASH and PYROGRAM_SESSION_STRING:
@@ -86,7 +89,37 @@ async def stop_userbot(app: Application):
         except Exception as e:
             print(f"Userbot kapanırken beklenen bir hata oluştu (yoksayılıyor): {e}")
 
-# ==================== YARDIMCI FONKSİYONLAR ====================
+# ==================== YARDIMCI & GÜVENLİK FONKSİYONLARI ====================
+async def check_unauthorized_pm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Yetkisiz kişilerin botla özelden iletişimini engeller."""
+    if not update.effective_user or not update.message:
+        return
+    
+    if update.message.chat.type != "private":
+        return
+        
+    user_id = str(update.effective_user.id)
+    if user_id in ALLOWED_KONTROL_USERS or user_id in ALLOWED_DUYURU_USERS:
+        return
+        
+    if user_id in BLOCKED_USERS:
+        raise ApplicationHandlerStop 
+        
+    count = UNAUTHORIZED_COUNTS.get(user_id, 0)
+    count += 1
+    UNAUTHORIZED_COUNTS[user_id] = count
+    
+    if count <= 3:
+        await update.message.reply_text("Yetki yok.")
+        raise ApplicationHandlerStop
+    else:
+        BLOCKED_USERS.add(user_id)
+        raise ApplicationHandlerStop
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/start komutu geldiğinde sessiz kalır, hiçbir cevap döndürmez."""
+    pass
+
 def get_user_mention(user):
     return f"@{user.username}" if user.username else user.first_name
 
@@ -506,7 +539,7 @@ MUHATAP_REGEX = re.compile(r'(?i)\b(benimle muhatap olma|muhatap olma|muhatap ol
 async def muhatap_olma_anket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.chat.id) != ALLOWED_GROUP_ID or not update.message.reply_to_message:
         return
-    if update.message.fromuser.is_bot:
+    if update.message.from_user.is_bot:
         return
     
     text = update.message.text or update.message.caption or ""
@@ -594,10 +627,10 @@ async def combined_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYP
         await muhatap_poll_answer(update, context)
         return
 
-    # 2) Duyuru poll'u mu?
+    # 2) Duyuru poll'u mu? (Eksik kalmıştı ama hata vermemesi için burada kalabilir)
     duyuru_data = context.bot_data.get(f"duyuru_poll_{poll_id}")
     if duyuru_data:
-        await duyuru_poll_answer(update, context)
+        # await duyuru_poll_answer(update, context) # Duyuru fonksiyonu kodda eksik olduğu için yoksayıldı.
         return
 
 async def kontrolet(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1051,4 +1084,59 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         await update.message.reply_text("Hata.")
 
-# ==================== DUYURU (GÜÇLENDİRİ
+# ==================== DUYURU (GÜÇLENDİRİ 
+
+# (Buradan sonrası kodunuz kesildiği için tarafımdan Application ve Handler kurulumları ile tamamlanmıştır)
+
+# ==================== ANA ÇALIŞTIRMA BLOĞU ====================
+def main():
+    # Application oluştur (Userbot başlatma ve durdurma eklentileriyle)
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(start_userbot).post_stop(stop_userbot).build()
+
+    # Filtreleri ilk başlatmada kontrol et
+    init_default_filters()
+
+    # --- HANDLER KAYITLARI ---
+    
+    # 1. Yetkisiz PM Engelleme (En yüksek öncelik için group=-1)
+    app.add_handler(TypeHandler(Update, check_unauthorized_pm), group=-1)
+
+    # 2. Komutlar
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("filtreekle", filtreekle))
+    app.add_handler(CommandHandler("filtresil", filtresil))
+    app.add_handler(CommandHandler("filtreliste", filtreliste))
+    app.add_handler(CommandHandler("filtrekisiekle", filtrekisiekle))
+    app.add_handler(CommandHandler("filtrekisisil", filtrekisisil))
+    app.add_handler(CommandHandler("filtreyedekle", filtreyedekle))
+    app.add_handler(CommandHandler("filtreyukle", filtreyukle))
+
+    app.add_handler(CommandHandler("kontrolet", kontrolet))
+    app.add_handler(CommandHandler("kontrolliste", kontrolliste))
+    app.add_handler(CommandHandler("kontrolsil", kontrolsil))
+    app.add_handler(CommandHandler("kontrolyedekle", kontrolyedekle))
+    app.add_handler(CommandHandler("kontrolyukle", kontrolyukle))
+    
+    app.add_handler(CommandHandler("soru", soru))
+
+    # 3. Anketler
+    app.add_handler(PollAnswerHandler(combined_poll_answer))
+
+    # 4. Tepkiler (Reaksiyonlar)
+    app.add_handler(MessageReactionHandler(kontrol_reaction))
+
+    # 5. Mesaj Dinleyicileri (Normal mesajlar üzerinden çalışan kontroller ve tetikleyiciler)
+    # Her birinin çalışabilmesi için farklı gruplara (veya aynı gruba fakat birbirini durdurmayacak şekilde) eklendiler
+    app.add_handler(MessageHandler(filters.ALL, cache_message_author), group=1)
+    app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, filtre_dinleyici), group=2)
+    app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, muhatap_olma_anket), group=3)
+    app.add_handler(MessageHandler(filters.REPLY, kontrol_ihlal_kontrol), group=4)
+    app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, kontrol_mention_check), group=5)
+    app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, zenith_dinleyici), group=6)
+
+    # Botu başlat
+    print("Bot çalışıyor...")
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
