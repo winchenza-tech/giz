@@ -6,7 +6,8 @@ import asyncio
 import json
 import random
 import io
-from collections import OrderedDict
+import html
+from collections import OrderedDict, deque
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -60,6 +61,10 @@ MAX_CACHE_SIZE = 2500
 
 UNAUTHORIZED_COUNTS = {}
 BLOCKED_USERS = set()
+
+# Zenith Takip Sistemi Hafızası
+GROUP_MESSAGE_BUFFERS = {}
+PENDING_ZENITH_TRACKERS = []
 
 # ==================== PYROGRAM USERBOT ====================
 userbot = None
@@ -865,68 +870,152 @@ async def kontrol_mention_check(update: Update, context: ContextTypes.DEFAULT_TY
                 )
                 return
 
-# ==================== ZENITHAR TAKİP (EKLENEN KISIM) ====================
-async def zenith_raporla(context: ContextTypes.DEFAULT_TYPE):
-    data = context.job.data
-    chat_id = data["chat_id"]
-    msg_id = data["msg_id"]
-    target_user = 1568435220
+# ==================== ZENITHAR TAKİP (GÜNCELLENEN KISIM) ====================
+def extract_message_content(msg):
+    """Mesajın metnini veya medya türünü çıkarır."""
+    text = msg.text or msg.caption or ""
+    if not text:
+        if msg.sticker:
+            text = f"[Çıkartma: {msg.sticker.emoji or ''}]"
+        elif msg.photo:
+            text = "[Fotoğraf]"
+        elif msg.video:
+            text = "[Video]"
+        elif msg.voice:
+            text = "[Sesli Mesaj]"
+        elif msg.audio:
+            text = "[Ses Dosyası]"
+        elif msg.document:
+            text = "[Dosya]"
+        elif msg.animation:
+            text = "[GIF]"
+    return text
+
+def contains_zenit_variant(text: str) -> bool:
+    """Metinde 'zenit' veya 'zenit' ile başlayan herhangi bir kelime/ek olup olmadığını kontrol eder."""
+    if not text:
+        return False
+    # Türkçe İ/I harflerini standart i/ı'ya çevirip küçültüyoruz ki ZENİTHAR gibi yazımlar da kaçmasın
+    normalized = text.replace("İ", "i").replace("I", "ı").lower()
+    # \bzenit ifadesi 'zenit' ile başlayan tüm kelimeleri (zenit, zeniti, zenith'i, zenithar'ı, zenitşar vb.) yakalar
+    return bool(re.search(r'\bzenit', normalized))
+
+async def send_zenith_report(bot, tracker):
+    if tracker.get("sent"):
+        return
+    tracker["sent"] = True
     
+    if tracker in PENDING_ZENITH_TRACKERS:
+        PENDING_ZENITH_TRACKERS.remove(tracker)
+        
+    job = tracker.get("job")
+    if job:
+        try:
+            job.schedule_removal()
+        except Exception:
+            pass
+
+    target_user = 1568435220
+    before_msgs = tracker["before"]
+    trigger_msg = tracker["trigger"]
+    after_msgs = tracker["after"]
+
+    lines = ["🔍 Zenith / Zenithar Kelimesi Tespit Edildi!\n"]
+
+    lines.append(f"🔼 Önceki {len(before_msgs)} Mesaj:")
+    if before_msgs:
+        for m in before_msgs:
+            lines.append(f"👤 {m['sender']}: {m['text']}")
+    else:
+        lines.append("(Önceki mesaj yok)")
+
+    lines.append("\n🎯 Tetikleyici Mesaj:")
+    lines.append(f"👤 {trigger_msg['sender']}: {trigger_msg['text']}")
+
+    lines.append(f"\n🔽 Sonraki {len(after_msgs)} Mesaj:")
+    if after_msgs:
+        for m in after_msgs:
+            lines.append(f"👤 {m['sender']}: {m['text']}")
+    else:
+        lines.append("(Sonraki mesaj yok)")
+
+    report_text = "\n".join(lines)
+
+    if len(report_text) > 4000:
+        report_text = report_text[:4000] + "\n\n...(Metin çok uzun olduğu için kırpıldı)"
+
     try:
-        if not userbot or not userbot.is_connected:
-            await context.bot.send_message(
-                chat_id=target_user,
-                text=f"🚨 <b>Zenithar Kelimesi Tespit Edildi!</b>\nSohbet ID: <code>{chat_id}</code>\nMesaj ID: <code>{msg_id}</code>\n(Userbot bağlı olmadığı için mesajlar çekilemedi)",
-                parse_mode="HTML"
-            )
-            return
-
-        # Üstündeki 5 mesaj, hedef mesaj, altındaki 5 mesaj -> Toplam 11 mesajlık aralık
-        msg_ids = list(range(msg_id - 5, msg_id + 6))
-        messages = await userbot.get_messages(chat_id, msg_ids)
-
-        report_lines = [f"🚨 <b>Zenithar Kelimesi Tespit Edildi!</b>\nSohbet ID: <code>{chat_id}</code>\n\nBu mesaj, üstündeki 5 ve altındaki 5 mesajla birlikte (medyalar hariç) aşağıdadır:\n"]
-        
-        for m in messages:
-            if m.empty:
-                continue
-            sender_name = m.from_user.first_name if m.from_user else "Bilinmeyen"
-            text_content = m.text or m.caption or ""
-            
-            if text_content:
-                marker = "🎯 " if m.id == msg_id else "💬 "
-                report_lines.append(f"{marker}<b>{sender_name}:</b> {text_content}")
-
-        report_text = "\n\n".join(report_lines)
-        
-        # Telegramın 4096 karakter sınırına takılmamak için kontrol
-        if len(report_text) > 4000:
-            report_text = report_text[:4000] + "\n\n...(Metin çok uzun olduğu için kırpıldı)"
-
-        await context.bot.send_message(
+        await bot.send_message(
             chat_id=target_user,
-            text=report_text,
-            parse_mode="HTML"
+            text=report_text
         )
     except Exception as e:
         print(f"Zenith raporlama hatası: {e}")
 
+async def zenith_timeout_job(context: ContextTypes.DEFAULT_TYPE):
+    tracker = context.job.data
+    await send_zenith_report(context.bot, tracker)
+
 async def zenith_dinleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    msg = update.message
+    if not msg or not msg.chat:
         return
-    text = update.message.text or update.message.caption or ""
-    
-    if re.search(r'(?i)(zenithar|zenith|zenit)', text):
-        chat_id = update.message.chat_id
-        msg_id = update.message.message_id
         
-        # Gelebilecek alt mesajların (5 adet) yakalanabilmesi için 45 saniye gecikme verilir.
-        context.job_queue.run_once(
-            zenith_raporla,
-            when=45,
-            data={"chat_id": chat_id, "msg_id": msg_id},
-            name=f"zenith_{chat_id}_{msg_id}"
-        )
+    # Sadece gruplarda ve süper gruplarda çalışır
+    if msg.chat.type not in ["group", "supergroup"]:
+        return
+
+    text_content = extract_message_content(msg)
+    if not text_content:
+        return
+
+    chat_id = msg.chat.id
+    sender_name = msg.from_user.first_name if msg.from_user else (msg.sender_chat.title if msg.sender_chat else "Bilinmeyen")
+    
+    msg_entry = {
+        "id": msg.message_id,
+        "sender": sender_name,
+        "text": text_content
+    }
+
+    if chat_id not in GROUP_MESSAGE_BUFFERS:
+        GROUP_MESSAGE_BUFFERS[chat_id] = deque(maxlen=5)
+
+    # 1) Bu grupta bekleyen aktif bir Zenith takipçisi varsa, yeni gelen mesajı "Sonraki Mesajlar" listesine ekle
+    for tracker in list(PENDING_ZENITH_TRACKERS):
+        if tracker["chat_id"] == chat_id and not tracker["sent"]:
+            tracker["after"].append(msg_entry)
+            # 5 sonraki mesaj tamamlandıysa beklemeden hemen gönder
+            if len(tracker["after"]) >= 5:
+                await send_zenith_report(context.bot, tracker)
+
+    # 2) Mesajın içinde zenit veya zenit ile başlayan herhangi bir kelime/türev geçiyor mu kontrol et
+    raw_text = msg.text or msg.caption or ""
+    if contains_zenit_variant(raw_text):
+        before_msgs = list(GROUP_MESSAGE_BUFFERS[chat_id])
+        
+        tracker = {
+            "chat_id": chat_id,
+            "before": before_msgs,
+            "trigger": msg_entry,
+            "after": [],
+            "sent": False,
+            "job": None
+        }
+        PENDING_ZENITH_TRACKERS.append(tracker)
+        
+        # Grupta 5 mesaj tamamlanmazsa bile 60 saniye sonra mevcut mesajlarla raporu gönder
+        if context.job_queue:
+            job = context.job_queue.run_once(
+                zenith_timeout_job,
+                when=60,
+                data=tracker,
+                name=f"zenith_{chat_id}_{msg.message_id}"
+            )
+            tracker["job"] = job
+
+    # 3) Şu anki mesajı grup hafızasına (son 5 mesaj) ekle
+    GROUP_MESSAGE_BUFFERS[chat_id].append(msg_entry)
 
 # ==================== YEDEK / YÜKLE ====================
 async def kontrolyedekle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1162,7 +1251,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, muhatap_olma_anket), group=3)
     app.add_handler(MessageHandler(filters.REPLY, kontrol_ihlal_kontrol), group=4)
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, kontrol_mention_check), group=5)
-    app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, zenith_dinleyici), group=6)
+    app.add_handler(MessageHandler(filters.ALL, zenith_dinleyici), group=6)
 
     # Botu başlat
     print("Bot çalışıyor...")
